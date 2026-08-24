@@ -468,14 +468,7 @@ async function startServer() {
       io.to(room.code).emit('roomUpdate', publicState(room));
     });
 
-    socket.on('startGame', () => {
-      const room = rooms[socket.data.roomCode];
-      if (!room || room.hostId !== socket.id || room.started) return;
-      if (room.players.length < 2) {
-        socket.emit('errorMsg', 'Mindestens 2 Spieler sind für den Spielstart nötig.');
-        return;
-      }
-
+    function initiateGame(room: Room, isRematch: boolean = false) {
       room.started = true;
       room.deck = buildDeck();
       room.pending = null;
@@ -501,7 +494,31 @@ async function startServer() {
       room.turnIndex = 0;
       io.to(room.code).emit('gameStarted', publicState(room));
       room.players.forEach(p => sendHand(room, p));
-      log(room, 'Maskerade beginnt! Die Hofkarten wurden verteilt. Jeder Spieler startet mit 2 Münzen.');
+      if (isRematch) {
+        log(room, '⚡ Ein erneutes Spiel wurde direkt gestartet! Die Hofkarten wurden neu verteilt. Jeder startet mit 2 Münzen.');
+      } else {
+        log(room, 'Maskerade beginnt! Die Hofkarten wurden verteilt. Jeder Spieler startet mit 2 Münzen.');
+      }
+    }
+
+    socket.on('startGame', () => {
+      const room = rooms[socket.data.roomCode];
+      if (!room || room.hostId !== socket.id || room.started) return;
+      if (room.players.length < 2) {
+        socket.emit('errorMsg', 'Mindestens 2 Spieler sind für den Spielstart nötig.');
+        return;
+      }
+      initiateGame(room, false);
+    });
+
+    socket.on('startRematch', () => {
+      const room = rooms[socket.data.roomCode];
+      if (!room || room.hostId !== socket.id) return;
+      if (room.players.length < 2) {
+        socket.emit('errorMsg', 'Mindestens 2 Spieler sind für ein Spiel nötig.');
+        return;
+      }
+      initiateGame(room, true);
     });
 
     socket.on('declareAction', ({ actionKey, targetId }: { actionKey: string; targetId?: string }) => {
@@ -722,9 +739,9 @@ async function startServer() {
       nextTurn(room);
     });
 
-    socket.on('restartGame', () => {
+    function handleBackToLobby(socketId: string) {
       const room = rooms[socket.data.roomCode];
-      if (!room || room.hostId !== socket.id) return;
+      if (!room || room.hostId !== socketId) return;
 
       room.started = false;
       room.pending = null;
@@ -737,6 +754,15 @@ async function startServer() {
       });
 
       io.to(room.code).emit('backToLobby', publicState(room));
+      log(room, '🏛️ Der Spielleiter hat alle Spieler zurück in die Lobby gebracht.');
+    }
+
+    socket.on('restartGame', () => {
+      handleBackToLobby(socket.id);
+    });
+
+    socket.on('returnToLobby', () => {
+      handleBackToLobby(socket.id);
     });
 
     // WebRTC signaling

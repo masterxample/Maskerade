@@ -466,7 +466,13 @@ export default function App() {
 
   const handleRestartGame = () => {
     if (socket && isHost) {
-      socket.emit('restartGame');
+      socket.emit('returnToLobby');
+    }
+  };
+
+  const handleStartRematch = () => {
+    if (socket && isHost) {
+      socket.emit('startRematch');
     }
   };
 
@@ -921,7 +927,7 @@ export default function App() {
       {/* Game Over Modal */}
       {gameOverWinner && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="glass-panel border-2 border-[#c5a059] rounded-3xl p-8 max-w-md w-full shadow-[0_0_50px_rgba(197,160,89,0.3)] text-center space-y-5">
+          <div className="glass-panel border-2 border-[#c5a059] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-[0_0_50px_rgba(197,160,89,0.3)] text-center space-y-5">
             <div className="w-16 h-16 rounded-2xl bg-[#c5a05922] border-2 border-[#c5a059] flex items-center justify-center text-[#c5a059] mx-auto shadow-[0_0_20px_rgba(197,160,89,0.4)]">
               <Crown className="w-8 h-8" />
             </div>
@@ -930,7 +936,7 @@ export default function App() {
               <span className="text-[10px] uppercase tracking-[0.25em] gold-accent font-semibold">
                 Siegerehrung
               </span>
-              <h2 className="font-serif text-3xl font-bold text-[#e0e0e0]">
+              <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#e0e0e0]">
                 {gameOverWinner} triumphiert!
               </h2>
             </div>
@@ -939,18 +945,46 @@ export default function App() {
               Alle anderen Mitspieler haben ihren Hofeinfluss verloren. Der Maskenball hat seinen einzig wahren Herrscher gefunden.
             </p>
 
+            {/* End of Game Options: Option 1 (Zurück zur Lobby) & Option 2 (Direkt erneutes Spiel starten) */}
             {isHost ? (
-              <button
-                id="restart-lobby-btn"
-                onClick={handleRestartGame}
-                className="w-full py-3.5 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-widest text-xs rounded-xl shadow-[0_0_20px_rgba(197,160,89,0.3)] transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Zurück zur Lobby</span>
-              </button>
+              <div className="space-y-2.5 pt-2">
+                {/* Option 2: Direkt erneutes Spiel starten */}
+                <button
+                  id="direct-rematch-btn"
+                  onClick={handleStartRematch}
+                  className="w-full py-3.5 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-wider text-xs rounded-xl shadow-[0_0_25px_rgba(197,160,89,0.4)] transition-all active:scale-95 flex items-center justify-center gap-2.5 cursor-pointer border border-[#e5c985]"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Direkt erneutes Spiel starten</span>
+                </button>
+
+                {/* Option 1: Zurück in die Lobby */}
+                <button
+                  id="restart-lobby-btn"
+                  onClick={handleRestartGame}
+                  className="w-full py-3 glass border border-[#c5a05955] text-[#c5a059] hover:bg-[#c5a05918] hover:text-[#d4b980] font-semibold uppercase tracking-wider text-xs rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Zurück in die Lobby</span>
+                </button>
+              </div>
             ) : (
-              <div className="text-xs text-zinc-400 italic">
-                Warte auf den Spielleiter für die nächste Runde …
+              <div className="space-y-3 pt-2">
+                <div className="p-3 rounded-xl bg-[#c5a05912] border border-[#c5a05933] text-xs text-[#c5a059] flex items-center justify-center gap-2">
+                  <RotateCcw className="w-4 h-4 animate-spin flex-shrink-0" style={{ animationDuration: '4s' }} />
+                  <span>Warte auf den Spielleiter (Neues Spiel oder Lobby) …</span>
+                </div>
+                <button
+                  id="leave-gameover-btn"
+                  onClick={() => {
+                    socket?.disconnect();
+                    window.location.reload();
+                  }}
+                  className="w-full py-2.5 glass text-zinc-400 hover:text-white border border-white/10 text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Hauptmenü / Spiel verlassen</span>
+                </button>
               </div>
             )}
           </div>
