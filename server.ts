@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 
@@ -801,19 +802,30 @@ async function startServer() {
     });
   });
 
-  // Vite middleware setup
-  if (process.env.NODE_ENV !== 'production') {
+  // Vite middleware setup or Static file serving
+  const cwdDist = path.join(process.cwd(), 'dist');
+  const dirnameDist = typeof __dirname !== 'undefined' ? path.join(__dirname, '..', 'dist') : cwdDist;
+  const directDist = typeof __dirname !== 'undefined' ? __dirname : cwdDist;
+
+  const distPath = fs.existsSync(path.join(cwdDist, 'index.html'))
+    ? cwdDist
+    : fs.existsSync(path.join(dirnameDist, 'index.html'))
+    ? dirnameDist
+    : fs.existsSync(path.join(directDist, 'index.html'))
+    ? directDist
+    : cwdDist;
+
+  if (fs.existsSync(path.join(distPath, 'index.html')) || process.env.NODE_ENV === 'production') {
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   server.listen(PORT, '0.0.0.0', () => {
