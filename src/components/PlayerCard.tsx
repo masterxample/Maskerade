@@ -35,7 +35,19 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   // For self: check if stream exists and has an enabled, non-stopped video track
   // For peer: check if stream exists, has video track, and peer has not disabled video
   const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
-  const isVideoAvailable = !!videoTrack && (isSelf ? true : hasVideo);
+  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (!!videoTrack || hasVideo);
+
+  const handleVideoRef = (videoEl: HTMLVideoElement | null) => {
+    videoRef.current = videoEl;
+    if (videoEl && stream) {
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
+      videoEl.play().catch(err => {
+        console.warn('Auto-play video playback handled:', err);
+      });
+    }
+  };
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -133,13 +145,13 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
 
         {/* Center: Webcam Window or Avatar Box */}
         <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/90 border border-[#c5a05933] shadow-inner mb-3 flex items-center justify-center group">
-          {isVideoAvailable ? (
+          {isVideoAvailable && stream ? (
             <video
-              ref={videoRef}
+              ref={handleVideoRef}
               autoPlay
               playsInline
               muted={true}
-              className="w-full h-full object-cover"
+              className={`w-full h-full object-cover ${isSelf ? 'scale-x-[-1]' : ''}`}
             />
           ) : (
             <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-500 select-none py-4">

@@ -123,17 +123,16 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
         )}
       </div>
 
-      {/* Eliminated Overlay if dead (Requirement 4: Distinctly marked as Aufgedeckt / Zerrissen) */}
+      {/* Eliminated Overlay if dead */}
       {!alive && (
-        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-1.5 backdrop-blur-[1px] border-t-2 border-b-2 border-red-500/80">
-          <div className="w-7 h-7 rounded-full bg-red-950/90 border-2 border-red-500 flex items-center justify-center text-red-400 shadow-lg mb-1 animate-pulse">
+        <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center p-1.5 backdrop-blur-[1px] border-t-2 border-b-2 border-red-500/80 overflow-hidden">
+          {/* Subtle diagonal tear / slash energy line */}
+          <div className="absolute inset-0 pointer-events-none opacity-40 bg-[linear-gradient(135deg,transparent_45%,rgba(239,68,68,0.7)_48%,rgba(239,68,68,0.7)_52%,transparent_55%)]" />
+          <div className="w-7 h-7 rounded-full bg-red-950/90 border-2 border-red-500 flex items-center justify-center text-red-400 shadow-lg mb-1 animate-pulse z-10">
             <Skull className="w-4 h-4" />
           </div>
-          <span className="font-serif font-black text-[10px] sm:text-xs text-red-300 tracking-wider uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,1)] text-center leading-tight">
+          <span className="font-serif font-black text-[10px] sm:text-xs text-red-300 tracking-wider uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,1)] text-center leading-tight z-10">
             Aufgedeckt
-          </span>
-          <span className="text-[8px] font-mono text-red-400 tracking-widest uppercase">
-            Zerrissen
           </span>
         </div>
       )}

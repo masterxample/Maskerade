@@ -1,16 +1,57 @@
 import React, { useEffect, useState } from 'react';
 import { CardRevealEvent } from '../types';
 import { getCardDef, ROLES_META } from '../data/cards';
-import { X, Sparkles, AlertTriangle, ShieldCheck, Flame, Skull } from 'lucide-react';
+import { X, ShieldCheck, Flame } from 'lucide-react';
 
 interface CardRevealModalProps {
   revealEvent: CardRevealEvent | null;
   onClose: () => void;
 }
 
+// Realistic tactile paper tear sound synthesis
+function playPaperTearSound() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const bufferSize = Math.floor(ctx.sampleRate * 0.4);
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.7));
+    }
+
+    const whiteNoise = ctx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.frequency.exponentialRampToValueAtTime(350, now + 0.35);
+    filter.Q.setValueAtTime(2.2, now);
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.setValueAtTime(0.01, now);
+    gainNode.gain.linearRampToValueAtTime(0.4, now + 0.04);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+    whiteNoise.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    whiteNoise.start(now);
+    whiteNoise.stop(now + 0.4);
+  } catch (e) {
+    // Audio context safely handled
+  }
+}
+
 export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, onClose }) => {
   const [visible, setVisible] = useState(false);
   const [isTorn, setIsTorn] = useState(false);
+  const [showSparks, setShowSparks] = useState(false);
 
   const isLoss = revealEvent?.isLoss ?? (revealEvent?.revealType === 'loss' || !revealEvent?.revealType?.includes('proof'));
 
@@ -18,17 +59,25 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
     if (revealEvent) {
       setVisible(true);
       setIsTorn(false);
+      setShowSparks(false);
 
-      // Requirement 3: Show the card 100% complete and pristine for exactly 2.0 seconds (2000ms),
-      // then trigger the dramatic tearing animation.
+      // Show the card pristine for 1.8 seconds, then trigger the realistic tear animation & audio
       let tearTimer: NodeJS.Timeout | null = null;
+      let sparksTimer: NodeJS.Timeout | null = null;
+
       if (isLoss) {
         tearTimer = setTimeout(() => {
           setIsTorn(true);
-        }, 2000);
+          setShowSparks(true);
+          playPaperTearSound();
+
+          sparksTimer = setTimeout(() => {
+            setShowSparks(false);
+          }, 1200);
+        }, 1800);
       }
 
-      // Auto-dismiss after 7.5s so players have time to see the whole sequence
+      // Auto-dismiss after 7.5s
       const closeTimer = setTimeout(() => {
         setVisible(false);
         onClose();
@@ -36,11 +85,13 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
 
       return () => {
         if (tearTimer) clearTimeout(tearTimer);
+        if (sparksTimer) clearTimeout(sparksTimer);
         clearTimeout(closeTimer);
       };
     } else {
       setVisible(false);
       setIsTorn(false);
+      setShowSparks(false);
     }
   }, [revealEvent, isLoss, onClose]);
 
@@ -51,7 +102,7 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-lg animate-fade-in pointer-events-auto">
-      <div className="relative glass-panel border-2 border-[#c5a059] rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-4 shadow-[0_0_60px_rgba(197,160,89,0.4)]">
+      <div className="relative glass-panel border-2 border-[#c5a059] rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-4 shadow-[0_0_60px_rgba(197,160,89,0.4)] overflow-hidden">
         {/* Close Button */}
         <button
           onClick={() => {
@@ -81,7 +132,7 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
               isLoss ? 'text-red-400' : 'text-emerald-400'
             }`}
           >
-            {isLoss ? (isTorn ? 'Hofkarte Zerrissen' : 'Hofkarten-Verlust') : 'Echter Rollenbeweis (Wahrheit)'}
+            {isLoss ? 'Hofkarten-Verlust' : 'Echter Rollenbeweis (Wahrheit)'}
           </span>
 
           <h3 className="font-serif text-xl sm:text-2xl font-bold text-[#e0e0e0] leading-tight">
@@ -89,22 +140,26 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
           </h3>
         </div>
 
-        {/* Big Card Display with 2-second pristine reveal followed by dramatic tearing effect */}
-        <div className="flex justify-center py-2 relative min-h-[240px] sm:min-h-[260px] items-center">
-          {/* Card Presentation Container */}
-          <div className="relative w-[160px] h-[240px] sm:w-[180px] sm:h-[270px]">
+        {/* Big Card Display with Pristine Reveal followed by Physical Tearing Effect (NO text "Zerrissen") */}
+        <div className="flex justify-center py-2 relative min-h-[250px] sm:min-h-[280px] items-center">
+          <div className="relative w-[170px] h-[255px] sm:w-[190px] sm:h-[285px]">
             {isLoss ? (
-              // Two halves tearing apart in full vibrant color after 2 seconds
+              // Two jagged halves tearing apart smoothly in full vibrant color
               <div className="relative w-full h-full">
-                {/* Left Half */}
+                {/* Left Torn Piece */}
                 <div
-                  className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out border border-[#c5a059]"
+                  className="absolute inset-0 rounded-2xl overflow-hidden border border-[#c5a059]/80 shadow-2xl"
                   style={{
-                    clipPath: isTorn ? 'polygon(0% 0%, 58% 0%, 46% 38%, 56% 68%, 42% 100%, 0% 100%)' : 'none',
+                    clipPath: isTorn
+                      ? 'polygon(0% 0%, 54% 0%, 47% 20%, 55% 42%, 43% 65%, 53% 85%, 45% 100%, 0% 100%)'
+                      : 'none',
                     transform: isTorn
-                      ? 'translate(-24px, 14px) rotate(-10deg) scale(0.95)'
+                      ? 'translate(-28px, 16px) rotate(-12deg) scale(0.93)'
                       : 'translate(0px, 0px) rotate(0deg) scale(1)',
-                    filter: isTorn ? 'drop-shadow(-6px 10px 14px rgba(0,0,0,0.85))' : 'drop-shadow(0 0 20px rgba(197,160,89,0.4))'
+                    transition: 'transform 0.85s cubic-bezier(0.16, 1, 0.3, 1), clip-path 0.2s ease, filter 0.85s ease',
+                    filter: isTorn
+                      ? 'drop-shadow(-8px 12px 16px rgba(0,0,0,0.9)) saturate(0.85)'
+                      : 'drop-shadow(0 0 25px rgba(197,160,89,0.45))'
                   }}
                 >
                   <img
@@ -114,16 +169,21 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
+                  {/* Subtle jagged edge fiber highlight on the split */}
+                  {isTorn && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-white/10 pointer-events-none" />
+                  )}
                 </div>
 
-                {/* Right Half (only split when isTorn is true) */}
+                {/* Right Torn Piece (Splits and drifts away) */}
                 {isTorn && (
                   <div
-                    className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out border border-[#c5a059]"
+                    className="absolute inset-0 rounded-2xl overflow-hidden border border-[#c5a059]/80 shadow-2xl animate-fade-in"
                     style={{
-                      clipPath: 'polygon(58% 0%, 100% 0%, 100% 100%, 42% 100%, 56% 68%, 46% 38%)',
-                      transform: 'translate(24px, 18px) rotate(10deg) scale(0.95)',
-                      filter: 'drop-shadow(6px 10px 14px rgba(0,0,0,0.85))'
+                      clipPath: 'polygon(54% 0%, 100% 0%, 100% 100%, 45% 100%, 53% 85%, 43% 65%, 55% 42%, 47% 20%)',
+                      transform: 'translate(28px, 22px) rotate(12deg) scale(0.93)',
+                      transition: 'transform 0.85s cubic-bezier(0.16, 1, 0.3, 1)',
+                      filter: 'drop-shadow(8px 12px 16px rgba(0,0,0,0.9)) saturate(0.85)'
                     }}
                   >
                     <img
@@ -136,18 +196,16 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
                   </div>
                 )}
 
-                {/* Tear energy flash & skull when torn */}
-                {isTorn && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 animate-fade-in">
-                    <div className="px-3 py-1 bg-red-950/90 border-2 border-red-500 rounded-xl text-red-300 font-serif font-extrabold text-xs uppercase tracking-widest shadow-[0_0_20px_rgba(239,68,68,0.8)] flex items-center gap-1.5 backdrop-blur-md">
-                      <Skull className="w-4 h-4 text-red-400" />
-                      <span>Zerrissen</span>
-                    </div>
+                {/* Dynamic Tear Flash & Sparks along the tear seam */}
+                {showSparks && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                    <div className="w-1 h-full bg-gradient-to-b from-red-400 via-amber-300 to-red-500 opacity-90 blur-[2px] animate-pulse" />
+                    <div className="absolute w-24 h-24 bg-red-500/30 rounded-full blur-xl animate-ping" />
                   </div>
                 )}
               </div>
             ) : (
-              // Unbroken Proof Card with Gold Aura
+              // Unbroken Proof Card with Gold / Emerald Aura
               <div className="relative w-full h-full rounded-2xl overflow-hidden shadow-[0_0_35px_rgba(16,185,129,0.4)] border-2 border-emerald-500/80 animate-scale-up">
                 <img
                   src={cardDef.image}

@@ -29,7 +29,19 @@ export const LobbyVideoTile: React.FC<LobbyVideoTileProps> = ({
 
   // Check if live video track is available and enabled
   const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
-  const isVideoAvailable = !!videoTrack && (isSelf ? true : hasVideo);
+  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (!!videoTrack || hasVideo);
+
+  const handleVideoRef = (videoEl: HTMLVideoElement | null) => {
+    videoRef.current = videoEl;
+    if (videoEl && stream) {
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
+      videoEl.play().catch(err => {
+        console.warn('Lobby video playback handled:', err);
+      });
+    }
+  };
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -53,13 +65,13 @@ export const LobbyVideoTile: React.FC<LobbyVideoTileProps> = ({
     <div className="relative rounded-2xl overflow-hidden glass border border-[#c5a05944] bg-[#0c0c10] shadow-lg flex flex-col group transition-all duration-300 hover:border-[#c5a059]">
       {/* Video Container (aspect-video) */}
       <div className="relative w-full aspect-video bg-black/90 flex items-center justify-center overflow-hidden">
-        {isVideoAvailable ? (
+        {isVideoAvailable && stream ? (
           <video
-            ref={videoRef}
+            ref={handleVideoRef}
             autoPlay
             playsInline
             muted={true}
-            className="w-full h-full object-cover transform scale-100"
+            className={`w-full h-full object-cover ${isSelf ? 'scale-x-[-1]' : ''}`}
           />
         ) : (
           <div className="flex flex-col items-center justify-center gap-2 text-zinc-500 py-6 select-none">

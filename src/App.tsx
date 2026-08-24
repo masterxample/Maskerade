@@ -539,13 +539,13 @@ export default function App() {
 
     // Turn camera ON
     try {
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const videoConstraints: MediaTrackConstraints = isMobile
+        ? { facingMode: { ideal: facingMode }, width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 } }
+        : { width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 } };
+
       const videoStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 640, max: 1280 },
-          height: { ideal: 480, max: 720 },
-          frameRate: { ideal: 24, max: 30 }
-        },
+        video: videoConstraints,
         audio: false
       });
 
@@ -555,6 +555,11 @@ export default function App() {
         if (!stream) {
           stream = new MediaStream([newVideoTrack]);
         } else {
+          // Cleanly remove any dead video tracks first
+          stream.getVideoTracks().forEach(t => {
+            t.stop();
+            stream?.removeTrack(t);
+          });
           stream.addTrack(newVideoTrack);
           stream = new MediaStream(stream.getTracks());
         }
@@ -574,6 +579,10 @@ export default function App() {
           if (!stream) {
             stream = new MediaStream([newVideoTrack]);
           } else {
+            stream.getVideoTracks().forEach(t => {
+              t.stop();
+              stream?.removeTrack(t);
+            });
             stream.addTrack(newVideoTrack);
             stream = new MediaStream(stream.getTracks());
           }
