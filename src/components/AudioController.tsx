@@ -9,8 +9,7 @@ import {
   Smartphone,
   BellRing,
   Radio,
-  SwitchCamera,
-  Camera
+  SwitchCamera
 } from 'lucide-react';
 import { PlayerState } from '../types';
 
@@ -198,32 +197,8 @@ export const AudioController: React.FC<AudioControllerProps> = ({
 
   const remoteCount = Object.keys(remoteStreams).length;
 
-  // Collect video feeds (local + remote)
-  const activeVideoFeeds: { id: string; name: string; isSelf: boolean; stream: MediaStream }[] = [];
-  if (localStream && localStream.getVideoTracks().length > 0 && isCameraActive) {
-    const selfPlayer = players.find(p => p.id === myId);
-    activeVideoFeeds.push({
-      id: myId || 'self',
-      name: (selfPlayer?.name || 'Du') + ' (Du)',
-      isSelf: true,
-      stream: localStream
-    });
-  }
-
-  (Object.entries(remoteStreams) as [string, MediaStream][]).forEach(([peerId, stream]) => {
-    if (stream && stream.getVideoTracks().length > 0) {
-      const p = players.find(player => player.id === peerId);
-      activeVideoFeeds.push({
-        id: peerId,
-        name: p?.name || 'Mitspieler',
-        isSelf: false,
-        stream
-      });
-    }
-  });
-
   return (
-    <div className="glass rounded-2xl p-3.5 space-y-3 border border-[#c5a05933] shadow-lg">
+    <div className="glass rounded-2xl p-3 sm:p-3.5 space-y-2.5 border border-[#c5a05933] shadow-lg">
       {/* Mobile Audio / Video Unlock Banner (Only shown on Mobile if audio isn't unlocked yet) */}
       {isMobile && !isAudioUnlocked && (
         <div className="w-full bg-[#c5a05915] border border-[#c5a05966] rounded-xl p-3 flex items-center justify-between gap-2 text-xs text-[#c5a059]">
@@ -327,56 +302,11 @@ export const AudioController: React.FC<AudioControllerProps> = ({
           <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
           <span>
             {remoteCount > 0
-              ? `${remoteCount} Mitspieler im Stream`
+              ? `${remoteCount} Mitspieler verbunden`
               : 'Warte auf Mitspieler...'}
           </span>
         </div>
       </div>
-
-      {/* Live Video Tiles Strip (Local & Remote Webcams) */}
-      {activeVideoFeeds.length > 0 && (
-        <div className="pt-2 border-t border-white/5">
-          <div className="flex items-center justify-between pb-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-[#c5a059] font-bold flex items-center gap-1.5">
-              <Camera className="w-3.5 h-3.5" />
-              Live Webcam-Übertragung ({activeVideoFeeds.length})
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-            {activeVideoFeeds.map(feed => (
-              <div
-                key={feed.id}
-                className="relative aspect-video rounded-xl overflow-hidden bg-black/90 border border-[#c5a05944] shadow-md group"
-              >
-                <video
-                  ref={el => {
-                    if (el && el.srcObject !== feed.stream) {
-                      el.srcObject = feed.stream;
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  webkit-playsinline="true"
-                  muted={feed.isSelf}
-                  className="w-full h-full object-cover"
-                />
-                {/* Overlay Name Tag */}
-                <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
-                  <span className="text-[10px] font-semibold bg-black/80 text-[#e0e0e0] px-2 py-0.5 rounded-md border border-white/10 truncate max-w-[85%] backdrop-blur-sm">
-                    {feed.name}
-                  </span>
-                  {feed.isSelf && isMicMuted && (
-                    <span className="p-1 rounded bg-red-950/80 border border-red-500/40 text-red-400" title="Stummgeschaltet">
-                      <MicOff className="w-2.5 h-2.5" />
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

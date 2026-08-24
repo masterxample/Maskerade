@@ -67,6 +67,7 @@ export interface GameState {
   players: PlayerState[];
   pending: PendingAction | null;
   turnDeadline?: number | null;
+  turnTimeLimit?: number;
 }
 
 export interface CardRevealEvent {
@@ -76,6 +77,8 @@ export interface CardRevealEvent {
   card: PlayerCardState;
   reason: string;
   timestamp: number;
+  revealType?: 'loss' | 'proof';
+  isLoss?: boolean;
 }
 
 export interface ActionDefinition {

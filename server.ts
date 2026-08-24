@@ -50,6 +50,7 @@ interface Room {
   deck: ServerCard[];
   pending: PendingState | null;
   turnDeadline: number | null;
+  turnTimeLimit: number;
   _timerTimeout: NodeJS.Timeout | null;
 }
 
@@ -159,6 +160,7 @@ function publicState(room: Room) {
     hostId: room.hostId,
     turnIndex: room.turnIndex,
     turnDeadline: room.turnDeadline,
+    turnTimeLimit: room.turnTimeLimit || 30,
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
@@ -228,7 +230,13 @@ async function startServer() {
     broadcast(room);
   }
 
-  function emitCardRevealed(room: Room, player: ServerPlayer, card: ServerCard, reason: string) {
+  function emitCardRevealed(
+    room: Room,
+    player: ServerPlayer,
+    card: ServerCard,
+    reason: string,
+    revealType: 'loss' | 'proof' = 'loss'
+  ) {
     io.to(room.code).emit('cardRevealed', {
       id: `reveal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       playerId: player.id,
@@ -241,6 +249,8 @@ async function startServer() {
         alive: card.alive
       },
       reason,
+      revealType,
+      isLoss: revealType === 'loss',
       timestamp: Date.now()
     });
   }
@@ -250,10 +260,14 @@ async function startServer() {
     if (alive.length <= 1) {
       clearRoomTimer(room);
       const winner = alive[0] ? alive[0].name : null;
-      io.to(room.code).emit('gameOver', { winnerName: winner });
       room.started = false;
       room.pending = null;
-      broadcast(room);
+      
+      // Delay gameOver event so the final card reveal & tear animation plays cleanly in the center first
+      setTimeout(() => {
+        io.to(room.code).emit('gameOver', { winnerName: winner });
+        broadcast(room);
+      }, 3500);
       return true;
     }
     return false;
@@ -271,13 +285,18 @@ async function startServer() {
     const actor = room.players[room.turnIndex];
     if (!actor || actor.eliminated) return;
 
-    startPhaseTimer(room, 30, () => {
+    const limit = room.turnTimeLimit || 30;
+    startPhaseTimer(room, limit, () => {
       if (!room.started || room.pending) return;
       const currentActor = room.players[room.turnIndex];
       if (!currentActor || currentActor.eliminated) return;
 
-      log(room, `⏱️ 30s Zeit abgelaufen: ${currentActor.name} nimmt automatisch 1 Münze (Einkommen).`);
-      currentActor.coins += 1;
+      if (currentActor.coins >= 10) {
+        log(room, `⏱️ ${limit}s Zeit abgelaufen: ${currentActor.name} besitzt bereits 10 Münzen. Keine weitere Münze gutgeschrieben.`);
+      } else {
+        currentActor.coins = Math.min(10, currentActor.coins + 1);
+        log(room, `⏱️ ${limit}s Zeit abgelaufen: ${currentActor.name} nimmt automatisch 1 Münze (Einkommen). Kontostand: ${currentActor.coins} Münzen.`);
+      }
       nextTurn(room);
     });
   }
@@ -313,8 +332,8 @@ async function startServer() {
       const c = p.cards.find(card => card.alive);
       if (c) {
         c.alive = false;
-        log(room, `💀 ${p.name} deckt die letzte Hofkarte auf: ${c.displayName} (${ROLES_INFO[c.role].name}).`);
-        emitCardRevealed(room, p, c, `${p.name} verliert die letzte Hofkarte: ${c.displayName}`);
+        log(room, `💀 ${p.name} verliert die letzte Hofkarte: ${c.displayName} (${ROLES_INFO[c.role].name}).`);
+        emitCardRevealed(room, p, c, `${p.name} verliert die letzte Hofkarte: ${c.displayName}`, 'loss');
       }
       checkEliminated(room, p);
       broadcast(room);
@@ -338,8 +357,8 @@ async function startServer() {
     room.pending.waitingOn = playerId;
     room.pending._loseCallback = callback;
 
-    // 30s Timer to pick card
-    startPhaseTimer(room, 30, () => {
+    const limit = room.turnTimeLimit || 30;
+    startPhaseTimer(room, limit, () => {
       if (!room.started || !room.pending || room.pending.phase !== 'loseInfluence') return;
       const targetP = room.players.find(pl => pl.id === room.pending?.waitingOn);
       if (!targetP) return;
@@ -347,8 +366,8 @@ async function startServer() {
       const aliveCard = targetP.cards.find(c => c.alive);
       if (aliveCard) {
         aliveCard.alive = false;
-        log(room, `⏱️ 30s Zeit abgelaufen: ${targetP.name} verliert automatisch ${aliveCard.displayName}.`);
-        emitCardRevealed(room, targetP, aliveCard, `Zeit abgelaufen: ${targetP.name} verliert ${aliveCard.displayName}`);
+        log(room, `⏱️ ${limit}s Zeit abgelaufen: ${targetP.name} verliert automatisch ${aliveCard.displayName}.`);
+        emitCardRevealed(room, targetP, aliveCard, `Zeit abgelaufen: ${targetP.name} verliert ${aliveCard.displayName}`, 'loss');
         checkEliminated(room, targetP);
         const cb = room.pending._loseCallback;
         room.pending._loseCallback = null;
@@ -374,8 +393,8 @@ async function startServer() {
 
     const hasCard = claimPlayer.cards.find(c => c.alive && c.role === claimRole);
     if (hasCard) {
-      // Player really had the role! Show card to everyone, replace card in deck and draw a new one
-      emitCardRevealed(room, claimPlayer, hasCard, `✓ ${claimPlayer.name} beweist die Rolle wahrheitsgemäß mit ${hasCard.displayName}!`);
+      // Player really had the role! Show proof card in center, return to deck and draw new card
+      emitCardRevealed(room, claimPlayer, hasCard, `✓ ${claimPlayer.name} beweist die Hofrolle wahrheitsgemäß mit ${hasCard.displayName}!`, 'proof');
       
       claimPlayer.cards = claimPlayer.cards.filter(c => c !== hasCard);
       room.deck.push(hasCard);
@@ -387,7 +406,23 @@ async function startServer() {
       }
       sendHand(room, claimPlayer);
       log(room, `✓ ${claimPlayer.name} zeigt wahrheitsgemäß ${hasCard.displayName} vor und zieht eine neue geheime Hofkarte.`);
-      startLoseInfluence(room, challengerId, () => callback(false));
+
+      // Challenger loses 1 card for the failed challenge
+      startLoseInfluence(room, challengerId, () => {
+        // Sonderregel Bluthund: Zweifelt das Ziel den Mordanschlag an und der Angreifer hat den Bluthund wirklich,
+        // verliert das Ziel 2 Karten auf einmal (1x für Anfechtung + 1x für Anschlag).
+        if (room.pending && room.pending.action === 'anschlag' && room.pending.targetId === challengerId) {
+          const targetPlayer = room.players.find(p => p.id === challengerId);
+          if (targetPlayer && influenceCount(targetPlayer) > 0) {
+            log(room, `💥 Bluthund-Sonderregel: ${targetPlayer.name} hat den Mordanschlag angefochten und verloren — verliert zusätzlich 1 Hofkarte durch den Mordanschlag!`);
+            startLoseInfluence(room, challengerId, () => {
+              callback(false);
+            });
+            return;
+          }
+        }
+        callback(false);
+      });
     } else {
       log(room, `✗ ${claimPlayer.name} kann die Karte (${ROLES_INFO[claimRole].name}) nicht vorweisen — Bluff aufgedeckt!`);
       startLoseInfluence(room, claimPlayerId, () => callback(true));
@@ -407,13 +442,13 @@ async function startServer() {
     room.pending.waitingOn = playerId;
     room.pending._exchangePool = drawn;
 
-    // 30s Timer for Exchange
-    startPhaseTimer(room, 30, () => {
+    const limit = room.turnTimeLimit || 30;
+    startPhaseTimer(room, limit, () => {
       if (!room.started || !room.pending || room.pending.phase !== 'exchange') return;
       const exPlayer = room.players.find(pl => pl.id === room.pending?.waitingOn);
       if (exPlayer && room.pending._exchangePool) {
         room.deck = shuffle(room.deck.concat(room.pending._exchangePool));
-        log(room, `⏱️ 30s Zeit abgelaufen: ${exPlayer.name} behält die aktuellen Hofkarten.`);
+        log(room, `⏱️ ${limit}s Zeit abgelaufen: ${exPlayer.name} behält die aktuellen Hofkarten.`);
         room.pending = null;
         broadcast(room);
         nextTurn(room);
@@ -438,21 +473,21 @@ async function startServer() {
 
     switch (room.pending.action) {
       case 'einkommen':
-        actor.coins += 1;
+        actor.coins = Math.min(10, actor.coins + 1);
         log(room, `${actor.name} erhält 1 Münze (Einkommen). Kontostand: ${actor.coins} Münzen.`);
         room.pending = null;
         nextTurn(room);
         return;
 
       case 'fremde_hilfe':
-        actor.coins += 2;
+        actor.coins = Math.min(10, actor.coins + 2);
         log(room, `${actor.name} erhält 2 Münzen (Entwicklungshilfe). Kontostand: ${actor.coins} Münzen.`);
         room.pending = null;
         nextTurn(room);
         return;
 
       case 'steuer':
-        actor.coins += 3;
+        actor.coins = Math.min(10, actor.coins + 3);
         log(room, `${actor.name} kassiert 3 Münzen (Steuern des Kanzlers). Kontostand: ${actor.coins} Münzen.`);
         room.pending = null;
         nextTurn(room);
@@ -461,8 +496,9 @@ async function startServer() {
       case 'raubzug': {
         if (!target) return;
         const amt = Math.min(2, target.coins);
+        const gain = Math.min(amt, 10 - actor.coins);
         target.coins -= amt;
-        actor.coins += amt;
+        actor.coins += gain;
         log(room, `${actor.name} raubt ${amt} Münze(n) von ${target.name}. [${actor.name}: ${actor.coins} | ${target.name}: ${target.coins}]`);
         room.pending = null;
         nextTurn(room);
@@ -507,6 +543,7 @@ async function startServer() {
         deck: [],
         pending: null,
         turnDeadline: null,
+        turnTimeLimit: 30,
         _timerTimeout: null
       };
 
@@ -569,6 +606,16 @@ async function startServer() {
       room.maxPlayers = clamped;
       io.to(room.code).emit('roomUpdate', publicState(room));
       log(room, `👥 Maximale Spieleranzahl auf ${clamped} Spieler angepasst.`);
+    });
+
+    socket.on('updateTurnTimeLimit', ({ turnTimeLimit }: { turnTimeLimit: number }) => {
+      const room = rooms[socket.data.roomCode];
+      if (!room || room.hostId !== socket.id || room.started) return;
+      const clamped = Math.max(10, Math.min(600, parseInt(String(turnTimeLimit), 10) || 30));
+      room.turnTimeLimit = clamped;
+      io.to(room.code).emit('roomUpdate', publicState(room));
+      const timeStr = clamped < 60 ? `${clamped}s` : `${Math.floor(clamped / 60)}m ${clamped % 60 ? (clamped % 60) + 's' : ''}`;
+      log(room, `⏱️ Zugzeit-Limit auf ${timeStr} angepasst.`);
     });
 
     socket.on('kickPlayer', ({ playerId }: { playerId: string }) => {
@@ -701,10 +748,11 @@ async function startServer() {
       const claimedRoleName = def.role ? ` (behauptet: ${ROLES_INFO[def.role].name})` : '';
       log(room, `${actor.name} beansprucht „${def.label}“${claimedRoleName}${target ? ` gegen ${target.name}` : ''}.`);
 
-      // 30s response timer
-      startPhaseTimer(room, 30, () => {
+      // Dynamic response timer
+      const limit = room.turnTimeLimit || 30;
+      startPhaseTimer(room, limit, () => {
         if (!room.started || !room.pending || room.pending.phase !== 'response') return;
-        log(room, `⏱️ 30s Reaktionszeit abgelaufen: Niemand hat widersprochen (Stillschweigend akzeptiert).`);
+        log(room, `⏱️ ${limit}s Reaktionszeit abgelaufen: Niemand hat widersprochen (Aktion akzeptiert).`);
         resolveAction(room);
       });
     });
@@ -771,10 +819,11 @@ async function startServer() {
 
       log(room, `🛡️ ${playerName(room, blockerId)} blockt mit ${ROLES_INFO[role].name}.`);
 
-      // 30s block response timer
-      startPhaseTimer(room, 30, () => {
+      // Dynamic block response timer
+      const blockLimit = room.turnTimeLimit || 30;
+      startPhaseTimer(room, blockLimit, () => {
         if (!room.started || !room.pending || room.pending.phase !== 'blockResponse' || !room.pending.block) return;
-        log(room, `⏱️ 30s Reaktionszeit abgelaufen: Niemand hat den Block angezweifelt.`);
+        log(room, `⏱️ ${blockLimit}s Reaktionszeit abgelaufen: Niemand hat den Block angezweifelt.`);
         room.pending = null;
         nextTurn(room);
       });

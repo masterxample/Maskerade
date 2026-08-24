@@ -1,11 +1,12 @@
 import React from 'react';
-import { PendingAction, PlayerState, RoleKey } from '../types';
+import { PendingAction, PlayerCardState, PlayerState, RoleKey } from '../types';
 import { GAME_ACTIONS, ROLES_META } from '../data/cards';
 import { Shield, Swords, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
 interface PendingBannerProps {
   pending: PendingAction;
   players: PlayerState[];
+  myHand?: PlayerCardState[];
   myId: string;
   onPass: () => void;
   onChallenge: () => void;
@@ -18,6 +19,7 @@ interface PendingBannerProps {
 export const PendingBanner: React.FC<PendingBannerProps> = ({
   pending,
   players,
+  myHand = [],
   myId,
   onPass,
   onChallenge,
@@ -31,12 +33,14 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
   const actionDef = GAME_ACTIONS[pending.action];
   const me = players.find(p => p.id === myId);
 
+  const aliveHandRoles = myHand.filter(c => c.alive).map(c => c.role);
+
   if (!actor || !actionDef || !me) return null;
 
   const isActor = myId === pending.actorId;
   const isTarget = myId === pending.targetId;
 
-  // Phase 1: Action Claimed -> Response (Challenge / Block / Pass)
+  // Phase 1: Action Claimed -> Response (Challenge / Block / Accept)
   if (pending.phase === 'response') {
     const hasResponded = pending.responded.includes(myId);
     const isEligibleToRespond = !isActor && !me.eliminated && !hasResponded;
@@ -76,32 +80,41 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
             {actionDef.challengeable && (
               <button
                 onClick={onChallenge}
-                className="px-3.5 py-2 bg-red-900/60 hover:bg-red-800/80 text-red-100 font-bold text-xs rounded-xl border border-red-500/40 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-2 bg-red-950/70 hover:bg-red-900/90 text-red-200 font-bold text-xs rounded-xl border border-red-500/50 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
               >
-                <AlertCircle className="w-3.5 h-3.5 text-red-300" />
+                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
                 <span>Anfechten! (Bluff?)</span>
               </button>
             )}
 
             {actionDef.blockable && (actionDef.blockEligibility === 'anyone' || isTarget) && (
-              actionDef.blockRoles.map(roleKey => (
-                <button
-                  key={roleKey}
-                  onClick={() => onBlock(roleKey)}
-                  className="px-3.5 py-2 bg-[#c5a05922] hover:bg-[#c5a05933] text-[#c5a059] font-bold text-xs rounded-xl border border-[#c5a05966] shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Shield className="w-3.5 h-3.5 text-[#c5a059]" />
-                  <span>Blocken: {ROLES_META[roleKey].name}</span>
-                </button>
-              ))
+              actionDef.blockRoles.map(roleKey => {
+                const hasCard = aliveHandRoles.includes(roleKey);
+                return (
+                  <button
+                    key={roleKey}
+                    onClick={() => onBlock(roleKey)}
+                    className={`px-3.5 py-2 font-bold text-xs rounded-xl border shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer ${
+                      hasCard
+                        ? 'bg-emerald-950/70 hover:bg-emerald-900/90 text-emerald-200 border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                        : 'bg-red-950/70 hover:bg-red-900/90 text-red-200 border-red-500/50'
+                    }`}
+                  >
+                    <Shield className={`w-3.5 h-3.5 ${hasCard ? 'text-emerald-400' : 'text-red-400'}`} />
+                    <span>
+                      Blocken: {ROLES_META[roleKey].name} {hasCard ? '(Echte Karte)' : '(Bluff)'}
+                    </span>
+                  </button>
+                );
+              })
             )}
 
             <button
               onClick={onPass}
-              className="px-3.5 py-2 glass hover:bg-white/10 text-zinc-200 hover:text-white font-semibold text-xs rounded-xl border border-white/10 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 font-semibold text-xs rounded-xl border border-emerald-500/40 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Aktion akzeptieren (Passen)</span>
+              <span>Aktion akzeptieren</span>
             </button>
           </div>
         ) : (
@@ -150,15 +163,15 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
           <div className="mt-3.5 pt-3 border-t border-white/5 flex flex-wrap items-center gap-2">
             <button
               onClick={onBlockChallenge}
-              className="px-3.5 py-2 bg-red-900/60 hover:bg-red-800/80 text-red-100 font-bold text-xs rounded-xl border border-red-500/40 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 bg-red-950/70 hover:bg-red-900/90 text-red-200 font-bold text-xs rounded-xl border border-red-500/50 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
             >
-              <AlertCircle className="w-3.5 h-3.5 text-red-300" />
+              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
               <span>Block anfechten! (Hat er die Karte?)</span>
             </button>
 
             <button
               onClick={onBlockPass}
-              className="px-3.5 py-2 glass hover:bg-white/10 text-zinc-200 hover:text-white font-semibold text-xs rounded-xl border border-white/10 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 font-semibold text-xs rounded-xl border border-emerald-500/40 shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
               <span>Block akzeptieren</span>

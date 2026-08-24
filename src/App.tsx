@@ -10,7 +10,7 @@ import { CardSelectionModal } from './components/CardSelectionModal';
 import { CardRevealModal } from './components/CardRevealModal';
 import { TurnTimerBar } from './components/TurnTimerBar';
 import { GameRulesDrawer } from './components/GameRulesDrawer';
-import { ALL_CARD_DEFS, getCardDef } from './data/cards';
+import { ALL_CARD_DEFS, getCardDef, CARD_BACK_IMAGE } from './data/cards';
 import {
   Crown,
   Users,
@@ -28,7 +28,8 @@ import {
   Play,
   RotateCcw,
   ShieldAlert,
-  Info
+  Clock,
+  Sliders
 } from 'lucide-react';
 
 export default function App() {
@@ -69,6 +70,14 @@ export default function App() {
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const pendingCandidatesRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
+
+  // Time format helper
+  const formatTimeLimit = (seconds: number) => {
+    if (seconds < 60) return `${seconds} Sek.`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return s > 0 ? `${m} Min. ${s} Sek.` : `${m} Min.`;
+  };
 
   // Socket Connection setup
   useEffect(() => {
@@ -345,7 +354,7 @@ export default function App() {
   // Independent Video / Camera Toggle
   const toggleCamera = async () => {
     if (isCameraActive) {
-      // Turn camera OFF
+      // Turn camera OFF cleanly without freezing
       if (localStreamRef.current) {
         const videoTracks = localStreamRef.current.getVideoTracks();
         videoTracks.forEach(t => {
@@ -364,6 +373,7 @@ export default function App() {
         syncLocalTracksToPeers(localStreamRef.current);
       }
       setIsCameraActive(false);
+      socket?.emit('media-status', { hasVideo: false, hasAudio: !isMicMuted, isSpeaking: false });
       return;
     }
 
@@ -392,6 +402,7 @@ export default function App() {
         setLocalStream(stream);
         setIsCameraActive(true);
         syncLocalTracksToPeers(stream);
+        socket?.emit('media-status', { hasVideo: true, hasAudio: !isMicMuted, isSpeaking: false });
       }
     } catch (err) {
       console.warn('Video access error, fallback to basic constraints:', err);
@@ -410,6 +421,7 @@ export default function App() {
           setLocalStream(stream);
           setIsCameraActive(true);
           syncLocalTracksToPeers(stream);
+          socket?.emit('media-status', { hasVideo: true, hasAudio: !isMicMuted, isSpeaking: false });
         }
       } catch (err2) {
         console.error('Camera permission denied:', err2);
@@ -521,6 +533,12 @@ export default function App() {
     }
   };
 
+  const handleUpdateTurnTimeLimit = (newLimit: number) => {
+    if (socket && isHost) {
+      socket.emit('updateTurnTimeLimit', { turnTimeLimit: newLimit });
+    }
+  };
+
   const handleKickPlayer = (playerId: string) => {
     if (socket && isHost) {
       socket.emit('kickPlayer', { playerId });
@@ -575,6 +593,7 @@ export default function App() {
   const myPlayer = gameState?.players.find(p => p.id === myId);
   const currentTurnPlayer = gameState?.started ? gameState.players[gameState.turnIndex] : null;
   const isMyTurn = currentTurnPlayer?.id === myId;
+  const currentTurnTimeLimit = gameState?.turnTimeLimit || 30;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0a0a0c] text-[#e0e0e0] relative select-none">
@@ -584,11 +603,17 @@ export default function App() {
         <div className="absolute bottom-0 right-0 w-[450px] h-[300px] bg-[#4a3b1d0a] blur-[120px] rounded-full" />
       </div>
 
-      {/* Header Bar */}
+      {/* Header Bar with New Golden Mask Emblem Logo (Point 6) */}
       <header className="relative z-10 h-16 border-b border-white/5 bg-[#0e0e11]/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center shadow-[0_0_12px_rgba(197,160,89,0.3)]">
-            <Sparkles className="w-5 h-5 text-black" />
+          {/* Circular Maskerade Emblem Logo */}
+          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-[#c5a059] shadow-[0_0_15px_rgba(197,160,89,0.4)] flex-shrink-0 bg-black">
+            <img
+              src={CARD_BACK_IMAGE}
+              alt="Maskerade Emblem"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div>
             <h1 className="font-serif text-lg sm:text-xl font-bold tracking-wider gold-accent flex items-center gap-1.5">
@@ -756,65 +781,119 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 2: LOBBY */}
+        {/* VIEW 2: LOBBY (Point 9: "Lobby" in gold, no "Versammlungs", custom timer slider) */}
         {/* ========================================================================= */}
         {view === 'lobby' && gameState && (
           <div className="max-w-xl w-full mx-auto my-auto py-6 space-y-5">
             <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-6">
               <div className="text-center space-y-2">
-                <span className="text-[10px] uppercase tracking-[0.25em] gold-accent font-semibold">
-                  Versammlungssaal
-                </span>
-                <h2 className="font-serif text-3xl font-bold text-[#e0e0e0]">
+                <h2 className="font-serif text-3xl sm:text-4xl font-bold tracking-wider gold-accent">
                   Lobby
                 </h2>
-                <p className="text-xs text-zinc-400">
-                  Teile diesen Einladungscode mit deinen Hofdamen & Rittern:
+                <p className="text-xs text-zinc-300">
+                  Teile diesen Einladungscode mit deinen Mitspielern.
                 </p>
-                <div className="inline-block my-3 px-8 py-3 bg-[#141414] border-2 border-[#c5a059] rounded-2xl shadow-[0_0_16px_rgba(197,160,89,0.25)]">
+                <div className="inline-block my-3 px-8 py-3 bg-[#141414] border-2 border-[#c5a059] rounded-2xl shadow-[0_0_20px_rgba(197,160,89,0.3)]">
                   <span className="font-mono text-3xl sm:text-4xl font-bold tracking-[0.2em] gold-accent">
                     {roomCode}
                   </span>
                 </div>
               </div>
 
-              {/* Lobby Host: Player Count Adjustment */}
-              {isHost && (
-                <div className="flex items-center justify-between p-3.5 glass rounded-xl border border-[#c5a05933] bg-[#c5a05908]">
-                  <div className="flex items-center gap-2.5">
-                    <Users className="w-4 h-4 text-[#c5a059] flex-shrink-0" />
-                    <div className="text-left">
-                      <div className="text-xs font-semibold text-[#e0e0e0]">Maximale Spieleranzahl</div>
-                      <div className="text-[10px] text-zinc-400">Option nur für den Spielleiter</div>
+              {/* Lobby Host: Player Count & Turn Time Limit Adjustment */}
+              {isHost ? (
+                <div className="space-y-3 p-4 glass rounded-2xl border border-[#c5a05933] bg-[#c5a05908]">
+                  {/* Player Count */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Users className="w-4 h-4 text-[#c5a059] flex-shrink-0" />
+                      <div className="text-left">
+                        <div className="text-xs font-semibold text-[#e0e0e0]">Maximale Spieleranzahl</div>
+                        <div className="text-[10px] text-zinc-400">Maximal 6 Hofmitglieder</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        id="decrease-max-players-btn"
+                        onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers - 1)}
+                        disabled={gameState.maxPlayers <= Math.max(2, gameState.players.length)}
+                        className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
+                        title="Spieleranzahl verringern"
+                      >
+                        -
+                      </button>
+                      <span className="font-mono text-xs sm:text-sm font-bold text-[#e0e0e0] px-1.5 whitespace-nowrap">
+                        {gameState.maxPlayers} Spieler
+                      </span>
+                      <button
+                        id="increase-max-players-btn"
+                        onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers + 1)}
+                        disabled={gameState.maxPlayers >= 6}
+                        className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
+                        title="Spieleranzahl erhöhen"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      id="decrease-max-players-btn"
-                      onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers - 1)}
-                      disabled={gameState.maxPlayers <= Math.max(2, gameState.players.length)}
-                      className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
-                      title="Spieleranzahl verringern"
-                    >
-                      -
-                    </button>
-                    <span className="font-mono text-xs sm:text-sm font-bold text-[#e0e0e0] px-1.5 whitespace-nowrap">
-                      {gameState.maxPlayers} Spieler
-                    </span>
-                    <button
-                      id="increase-max-players-btn"
-                      onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers + 1)}
-                      disabled={gameState.maxPlayers >= 6}
-                      className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
-                      title="Spieleranzahl erhöhen"
-                    >
-                      +
-                    </button>
+
+                  {/* Turn Time Limit Controller (10s to 10min) */}
+                  <div className="pt-2.5 border-t border-white/5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <Clock className="w-4 h-4 text-[#c5a059] flex-shrink-0" />
+                        <div className="text-left">
+                          <div className="text-xs font-semibold text-[#e0e0e0]">Zeitlimit für Züge</div>
+                          <div className="text-[10px] text-zinc-400">Einstellbar von 10 Sek. bis 10 Min.</div>
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs font-bold gold-accent px-2 py-0.5 rounded bg-[#c5a05915] border border-[#c5a05944]">
+                        {formatTimeLimit(currentTurnTimeLimit)}
+                      </span>
+                    </div>
+
+                    <input
+                      id="turn-time-limit-slider"
+                      type="range"
+                      min={10}
+                      max={600}
+                      step={5}
+                      value={currentTurnTimeLimit}
+                      onChange={e => handleUpdateTurnTimeLimit(parseInt(e.target.value, 10))}
+                      className="w-full accent-[#c5a059] cursor-pointer"
+                    />
+
+                    {/* Quick Presets */}
+                    <div className="flex items-center justify-between gap-1 pt-1">
+                      {[15, 30, 45, 60, 120, 300].map(seconds => (
+                        <button
+                          key={seconds}
+                          onClick={() => handleUpdateTurnTimeLimit(seconds)}
+                          className={`px-2 py-1 rounded text-[10px] font-mono transition-all cursor-pointer ${
+                            currentTurnTimeLimit === seconds
+                              ? 'bg-[#c5a059] text-black font-bold shadow'
+                              : 'glass text-zinc-400 hover:text-white border border-white/5'
+                          }`}
+                        >
+                          {seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-3.5 glass rounded-xl border border-[#c5a05933] bg-[#c5a05908] text-xs">
+                  <div className="flex items-center gap-2 text-zinc-300">
+                    <Clock className="w-4 h-4 text-[#c5a059]" />
+                    <span>Zugzeit-Limit:</span>
+                  </div>
+                  <span className="font-mono font-bold gold-accent">
+                    {formatTimeLimit(currentTurnTimeLimit)}
+                  </span>
                 </div>
               )}
 
-              {/* Player list */}
+              {/* Player list with Kick functionality for Host */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-zinc-400 font-semibold px-2">
                   <span>Anwesende ({gameState.players.length}/{gameState.maxPlayers})</span>
@@ -938,20 +1017,20 @@ export default function App() {
               </div>
             </div>
 
-            {/* Turn & Action Countdown Timer (30s auto-pass / einkommen) */}
+            {/* Turn & Action Countdown Timer with configurable turn time limit */}
             <TurnTimerBar
               turnDeadline={gameState.turnDeadline}
-              totalSeconds={30}
+              totalSeconds={currentTurnTimeLimit}
               label={
                 gameState.pending
-                  ? 'Reaktionszeit (Stillschweigen bei Ablauf)'
+                  ? 'Reaktionszeit (Aktion akzeptiert bei Ablauf)'
                   : isMyTurn
                   ? 'Deine Zugzeit (Autom. Einkommen bei 0s)'
                   : `Zugzeit von ${currentTurnPlayer?.name}`
               }
             />
 
-            {/* Sound & Video Controller */}
+            {/* Media Controller Bar */}
             <AudioController
               localStream={localStream}
               remoteStreams={remoteStreams}
@@ -967,12 +1046,13 @@ export default function App() {
               myId={myId}
             />
 
-            {/* Pending Phase (Claims, Challenges, Blocks) */}
+            {/* Pending Phase (Claims, Challenges, Blocks) with Red/Green styling & no "(passen)" */}
             {gameState.pending && (
               <PendingBanner
                 id="pending-banner"
                 pending={gameState.pending}
                 players={gameState.players}
+                myHand={myHand}
                 myId={myId}
                 onPass={handlePass}
                 onChallenge={handleChallenge}
@@ -982,7 +1062,7 @@ export default function App() {
               />
             )}
 
-            {/* Main Game Grid: Left Game Area, Right Logs & Quick Reference */}
+            {/* Main Game Grid: Left Game Area, Right Logs */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Left Column (2 cols wide): Actions and Player Seats */}
               <div className="lg:col-span-2 space-y-4">
@@ -998,13 +1078,13 @@ export default function App() {
                   onDeclareAction={handleDeclareAction}
                 />
 
-                {/* Players Grid with embedded cards */}
+                {/* Players Grid with embedded cards directly under webcam (Point 7: Title is "Mitwirkende") */}
                 <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-white/5">
                     <div className="flex items-center gap-2">
                       <Users className="w-4 h-4 text-[#c5a059]" />
                       <h2 className="font-serif text-base font-bold text-[#e0e0e0]">
-                        Mitwirkende & Hofeinfluss
+                        Mitwirkende
                       </h2>
                     </div>
                     <span className="text-[11px] uppercase tracking-wider text-zinc-500">
@@ -1012,7 +1092,7 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     {gameState.players.map(p => (
                       <PlayerCard
                         key={p.id}
@@ -1030,7 +1110,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Column (1 col wide): Game Logs & Info */}
+              {/* Right Column (1 col wide): Game Logs */}
               <div className="space-y-4">
                 {/* Live Game Log */}
                 <div className="glass-panel rounded-2xl p-4 flex flex-col h-96">
@@ -1065,7 +1145,7 @@ export default function App() {
       {/* MODALS */}
       {/* ========================================================================= */}
 
-      {/* Card Reveal Announcement Modal (Broadcasting revealed/lost cards to all players) */}
+      {/* Card Reveal Announcement Modal with Ripping Effect (Points 3 & 4) */}
       <CardRevealModal
         revealEvent={revealedCardEvent}
         onClose={() => setRevealedCardEvent(null)}
@@ -1105,7 +1185,7 @@ export default function App() {
         onClose={() => setIsRulesOpen(false)}
       />
 
-      {/* Game Over Modal */}
+      {/* Game Over Modal (Point 10: Host options "Direkt erneutes Spiel starten" & "Zurück in die Lobby") */}
       {gameOverWinner && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
           <div className="glass-panel border-2 border-[#c5a059] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-[0_0_50px_rgba(197,160,89,0.3)] text-center space-y-5">

@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { PlayerState, PlayerCardState } from '../types';
 import { CardDisplay } from './CardDisplay';
-import { Coins, ShieldAlert, Crown, User, Volume2 } from 'lucide-react';
+import { Coins, ShieldAlert, Crown, User, Volume2, VideoOff } from 'lucide-react';
 
 interface PlayerCardProps {
   player: PlayerState;
@@ -9,6 +9,7 @@ interface PlayerCardProps {
   isCurrentTurn: boolean;
   myHand?: PlayerCardState[];
   stream?: MediaStream | null;
+  hasVideo?: boolean;
   isHost?: boolean;
   isSpeaking?: boolean;
   onCardClick?: (card: PlayerCardState | { isHidden: boolean; index: number }) => void;
@@ -21,12 +22,31 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   isCurrentTurn,
   myHand = [],
   stream,
+  hasVideo = false,
   isHost = false,
   isSpeaking = false,
   onCardClick,
   id
 }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const isEliminated = player.eliminated;
+
+  // Active video track check
+  const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
+  const isVideoAvailable = !!videoTrack && (isSelf ? true : hasVideo !== false);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isVideoAvailable && stream) {
+        if (videoRef.current.srcObject !== stream) {
+          videoRef.current.srcObject = stream;
+        }
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.srcObject = null;
+      }
+    }
+  }, [stream, isVideoAvailable]);
 
   // Active cards for self vs. opponents
   const selfAliveCards = isSelf ? myHand.filter(c => c.alive) : [];
@@ -35,55 +55,54 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   return (
     <div
       id={id}
-      className={`relative glass-panel rounded-2xl p-4 transition-all duration-300 ${
+      className={`relative glass-panel rounded-2xl p-4 transition-all duration-300 flex flex-col justify-between ${
         isCurrentTurn
-          ? 'border-[#c5a059] shadow-[0_0_16px_rgba(197,160,89,0.3)] scale-[1.01]'
-          : 'border-white/5 hover:border-[#c5a05944]'
+          ? 'border-[#c5a059] shadow-[0_0_20px_rgba(197,160,89,0.35)] ring-1 ring-[#c5a05988]'
+          : 'border-white/10 hover:border-[#c5a05944]'
       } ${isEliminated ? 'opacity-35 grayscale-[0.8] border-red-900/30' : ''}`}
     >
       {/* Turn Indicator Aura */}
       {isCurrentTurn && !isEliminated && (
-        <div className="absolute -top-2.5 left-4 px-3 py-0.5 bg-[#c5a059] text-black text-[10px] font-bold uppercase rounded-full shadow-[0_0_10px_rgba(197,160,89,0.5)] tracking-widest flex items-center gap-1.5 font-sans">
+        <div className="absolute -top-2.5 left-4 px-3 py-0.5 bg-[#c5a059] text-black text-[10px] font-bold uppercase rounded-full shadow-[0_0_12px_rgba(197,160,89,0.6)] tracking-widest flex items-center gap-1.5 font-sans z-10">
           <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
           Am Zug
         </div>
       )}
 
-      {/* Header with Position, Name, Coins, and Embedded Uniform Cards */}
-      <div className="flex items-start justify-between gap-3">
-        {/* Left: Player Info & Video Avatar */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+      {/* Top Section: Header & Player Stats */}
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             {player.position && (
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-[#c5a059] border border-[#c5a05933]">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-[#c5a059] border border-[#c5a05933] flex-shrink-0">
                 #{player.position}
               </span>
             )}
             {isHost && (
-              <span title="Raumeröffner" className="text-[#c5a059]">
+              <span title="Raumeröffner" className="text-[#c5a059] flex-shrink-0">
                 <Crown className="w-3.5 h-3.5 inline" />
               </span>
             )}
-            <h3 className="font-semibold text-sm text-[#e0e0e0] truncate tracking-tight">
+            <h3 className="font-serif font-bold text-sm text-[#e0e0e0] truncate tracking-tight">
               {player.name}
             </h3>
             {isSelf && (
-              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944]">
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944] flex-shrink-0">
                 Du
               </span>
             )}
             {isSpeaking && (
-              <span className="text-emerald-400 animate-pulse" title="Sprachübertragung aktiv">
+              <span className="text-emerald-400 animate-pulse flex-shrink-0" title="Sprachübertragung aktiv">
                 <Volume2 className="w-3.5 h-3.5 inline" />
               </span>
             )}
           </div>
 
           {/* Coins & Influence Pips */}
-          <div className="flex items-center gap-3 mt-1.5 text-xs">
-            <div className="flex items-center gap-1 font-mono font-bold gold-accent bg-[#c5a05915] border border-[#c5a05933] px-2.5 py-0.5 rounded-full text-xs">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 font-mono font-bold gold-accent bg-[#c5a05915] border border-[#c5a05933] px-2 py-0.5 rounded-full text-xs">
               <Coins className="w-3 h-3 text-[#c5a059]" />
-              <span>{player.coins} {player.coins === 1 ? 'Münze' : 'Münzen'}</span>
+              <span>{player.coins}</span>
             </div>
 
             {/* Influence Pips */}
@@ -96,41 +115,53 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                     className={`w-2.5 h-2.5 rounded-full transition-all ${
                       isAlivePip
                         ? 'bg-[#c5a059] shadow-[0_0_8px_rgba(197,160,89,0.8)]'
-                        : 'bg-zinc-800 border border-white/10 opacity-50'
+                        : 'bg-zinc-800 border border-white/10 opacity-40'
                     }`}
                   />
                 );
               })}
-              <span className="text-[10px] text-zinc-500 ml-0.5 font-mono">
-                {player.influence}/2
-              </span>
             </div>
           </div>
+        </div>
 
-          {/* Optional Video Feed if active with video tracks */}
-          {stream && stream.getVideoTracks().length > 0 && stream.getVideoTracks().some(t => t.readyState === 'live') && (
-            <div className="mt-2.5 relative w-28 aspect-video rounded-lg overflow-hidden border border-[#c5a05944] bg-black shadow-inner">
-              <video
-                ref={el => {
-                  if (el && el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                }}
-                autoPlay
-                playsInline
-                webkit-playsinline="true"
-                muted={isSelf}
-                className="w-full h-full object-cover"
-              />
-              <span className="absolute bottom-1 left-1 text-[9px] bg-black/85 px-1.5 py-0.2 rounded text-zinc-300 font-mono border border-white/10">
+        {/* Center: Webcam Window or Elegant Avatar Box */}
+        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/90 border border-[#c5a05933] shadow-inner mb-3 flex items-center justify-center group">
+          {isVideoAvailable ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              webkit-playsinline="true"
+              muted={isSelf}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-1 text-zinc-500 select-none">
+              <div className="w-10 h-10 rounded-full bg-[#c5a05915] border border-[#c5a05933] flex items-center justify-center text-[#c5a059] font-serif font-bold text-base shadow">
+                {player.name.slice(0, 1).toUpperCase()}
+              </div>
+              <span className="text-[10px] font-mono text-zinc-400">
                 {player.name}
               </span>
             </div>
           )}
+
+          {/* Video Overlay Name Pill */}
+          <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
+            <span className="text-[9px] font-semibold bg-black/80 text-zinc-200 px-2 py-0.5 rounded border border-white/10 truncate max-w-[80%] backdrop-blur-sm">
+              {player.name} {isSelf ? '(Du)' : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Section: Spürbar vergrößerte Hofkarten direkt unter dem Webcam-Fenster */}
+      <div className="pt-1">
+        <div className="text-[10px] uppercase font-mono tracking-wider gold-accent font-semibold mb-1.5 text-center flex items-center justify-center gap-1.5">
+          <span>Hofkarten ({player.influence}/2)</span>
         </div>
 
-        {/* Right: Embedded Cards cleanly displayed side-by-side next to name */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center justify-center gap-2.5 sm:gap-3">
           {isSelf ? (
             <>
               {/* My Alive Cards */}
@@ -166,7 +197,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
             </>
           ) : (
             <>
-              {/* Opponent Alive Cards (Hidden Backside in uniform size) */}
+              {/* Opponent Alive Cards (Hidden Backside) */}
               {Array.from({ length: player.influence }).map((_, idx) => (
                 <div key={`hidden-${idx}`} className="transform transition-transform hover:scale-105">
                   <CardDisplay
@@ -198,9 +229,9 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
 
       {/* Eliminated Footer */}
       {isEliminated && (
-        <div className="mt-2 text-center py-1 bg-red-950/40 border border-red-900/30 rounded-lg text-xs font-semibold text-red-400 flex items-center justify-center gap-1.5">
+        <div className="mt-3 text-center py-1.5 bg-red-950/50 border border-red-900/40 rounded-xl text-xs font-semibold text-red-400 flex items-center justify-center gap-1.5">
           <ShieldAlert className="w-3.5 h-3.5" />
-          <span>Ausgeschieden (Kein Hofeinfluss mehr)</span>
+          <span>Ausgeschieden (Kein Einfluss)</span>
         </div>
       )}
     </div>

@@ -36,6 +36,10 @@ export const TurnTimerBar: React.FC<TurnTimerBarProps> = ({
   const percentage = Math.min(100, Math.max(0, (timeLeft / totalSeconds) * 100));
   const isCritical = timeLeft <= 7;
 
+  const formattedTime = timeLeft >= 60
+    ? `${Math.floor(timeLeft / 60)} Min. ${timeLeft % 60 ? (timeLeft % 60) + ' Sek.' : ''}`
+    : `${timeLeft} Sek.`;
+
   return (
     <div className="w-full bg-[#141416] border border-[#c5a05933] rounded-xl p-2.5 space-y-1.5 shadow-md">
       <div className="flex items-center justify-between text-xs font-mono">
@@ -54,7 +58,7 @@ export const TurnTimerBar: React.FC<TurnTimerBarProps> = ({
               : 'bg-[#c5a05922] text-[#c5a059] border border-[#c5a05944]'
           }`}
         >
-          {timeLeft}s
+          {formattedTime}
         </span>
       </div>
 
