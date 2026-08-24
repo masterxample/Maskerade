@@ -10,6 +10,7 @@ import { CardSelectionModal } from './components/CardSelectionModal';
 import { CardRevealModal } from './components/CardRevealModal';
 import { TurnTimerBar } from './components/TurnTimerBar';
 import { GameRulesDrawer } from './components/GameRulesDrawer';
+import { LobbyVideoTile } from './components/LobbyVideoTile';
 import { ALL_CARD_DEFS, getCardDef, CARD_BACK_IMAGE } from './data/cards';
 import {
   Crown,
@@ -814,7 +815,7 @@ export default function App() {
         {/* VIEW 2: LOBBY (Point 9: "Lobby" in gold, no "Versammlungs", custom timer slider) */}
         {/* ========================================================================= */}
         {view === 'lobby' && gameState && (
-          <div className="max-w-xl w-full mx-auto my-auto py-6 space-y-5">
+          <div className="max-w-3xl w-full mx-auto my-auto py-6 space-y-5">
             <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-6">
               <div className="text-center space-y-2">
                 <h2 className="font-serif text-3xl sm:text-4xl font-bold tracking-wider gold-accent">
@@ -923,62 +924,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* Player list with Kick functionality for Host */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-zinc-400 font-semibold px-2">
-                  <span>Anwesende ({gameState.players.length}/{gameState.maxPlayers})</span>
-                  <span>Status</span>
-                </div>
-
-                <div className="space-y-2">
-                  {gameState.players.map(p => (
-                    <div
-                      key={p.id}
-                      className="flex items-center justify-between p-3.5 glass rounded-xl border border-white/5 gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center font-bold text-xs text-black flex-shrink-0">
-                          {p.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-semibold text-sm text-[#e0e0e0] truncate">
-                            {p.name}
-                          </span>
-                          {p.id === gameState.hostId && (
-                            <Crown className="w-3.5 h-3.5 text-[#c5a059] flex-shrink-0" title="Spielleiter" />
-                          )}
-                          {p.id === myId && (
-                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944] flex-shrink-0">
-                              Du
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className="text-xs font-semibold text-emerald-400/90 flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                          Bereit
-                        </span>
-
-                        {/* Kick Button for Host (shown for other players) */}
-                        {isHost && p.id !== myId && (
-                          <button
-                            id={`kick-player-${p.id}-btn`}
-                            onClick={() => handleKickPlayer(p.id)}
-                            className="p-1.5 rounded-lg glass hover:bg-red-500/20 hover:text-red-300 text-zinc-400 border border-red-500/20 hover:border-red-500/50 transition-all cursor-pointer active:scale-95 flex items-center gap-1 text-[11px]"
-                            title={`${p.name} aus der Lobby entfernen`}
-                          >
-                            <UserMinus className="w-3.5 h-3.5 text-red-400" />
-                            <span className="hidden sm:inline text-red-400 font-medium">Entfernen</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Audio & Video Controller in Lobby */}
               <AudioController
                 localStream={localStream}
@@ -994,6 +939,36 @@ export default function App() {
                 players={gameState.players}
                 myId={myId}
               />
+
+              {/* Dedicated Lobby Video Gallery (Kamera-Feld für alle Mitspieler in der Lobby) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-[#c5a059] font-semibold px-1">
+                  <div className="flex items-center gap-2">
+                    <Video className="w-4 h-4 text-[#c5a059]" />
+                    <span>Webcam- & Sprach-Galerie ({gameState.players.length}/{gameState.maxPlayers})</span>
+                  </div>
+                  <span className="text-zinc-400 font-mono text-[10px]">
+                    {isCameraActive ? 'Deine Kamera ist aktiv' : 'Kamera einschalten für Live-Bild'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {gameState.players.map(p => (
+                    <LobbyVideoTile
+                      key={p.id}
+                      player={p}
+                      isSelf={p.id === myId}
+                      isHost={p.id === gameState.hostId}
+                      canKick={isHost && p.id !== myId}
+                      stream={p.id === myId ? localStream : remoteStreams[p.id]}
+                      hasVideo={p.id === myId ? isCameraActive : (peerMediaStatus[p.id]?.hasVideo ?? !!remoteStreams[p.id]?.getVideoTracks()?.find(t => t.readyState === 'live' && t.enabled))}
+                      isMicMuted={p.id === myId ? isMicMuted : (peerMediaStatus[p.id]?.hasAudio === false)}
+                      isSpeaking={peerMediaStatus[p.id]?.isSpeaking}
+                      onKick={() => handleKickPlayer(p.id)}
+                    />
+                  ))}
+                </div>
+              </div>
 
               {/* Host actions */}
               <div className="pt-2">
