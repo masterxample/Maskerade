@@ -66,6 +66,16 @@ export interface GameState {
   turnIndex: number;
   players: PlayerState[];
   pending: PendingAction | null;
+  turnDeadline?: number | null;
+}
+
+export interface CardRevealEvent {
+  id: string;
+  playerId: string;
+  playerName: string;
+  card: PlayerCardState;
+  reason: string;
+  timestamp: number;
 }
 
 export interface ActionDefinition {

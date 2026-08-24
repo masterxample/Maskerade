@@ -10,7 +10,6 @@ import {
   BellRing,
   Radio,
   SwitchCamera,
-  Users,
   Camera
 } from 'lucide-react';
 import { PlayerState } from '../types';
@@ -20,8 +19,10 @@ interface AudioControllerProps {
   remoteStreams: Record<string, MediaStream>;
   isCameraActive: boolean;
   isMicMuted: boolean;
+  speakerEnabled: boolean;
   onToggleCamera: () => void;
   onToggleMic: () => void;
+  onToggleSpeaker: () => void;
   onSwitchFacingMode?: () => void;
   facingMode?: 'user' | 'environment';
   players?: PlayerState[];
@@ -33,26 +34,27 @@ export const AudioController: React.FC<AudioControllerProps> = ({
   remoteStreams,
   isCameraActive,
   isMicMuted,
+  speakerEnabled,
   onToggleCamera,
   onToggleMic,
+  onToggleSpeaker,
   onSwitchFacingMode,
   facingMode = 'user',
   players = [],
   myId = ''
 }) => {
-  const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [isAudioUnlocked, setIsAudioUnlocked] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [testTonePlaying, setTestTonePlaying] = useState<boolean>(false);
-  const [showVideoStrip, setShowVideoStrip] = useState<boolean>(true);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const peerAudioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
 
-  // Detect mobile device
+  // Detect mobile device reliably
   useEffect(() => {
     const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
-    const mobileCheck = /android|ipad|iphone|ipod|windows phone/i.test(userAgent.toLowerCase());
+    const mobileCheck = /android|ipad|iphone|ipod|windows phone/i.test(userAgent.toLowerCase()) || 
+      (typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 1024);
     setIsMobile(mobileCheck);
   }, []);
 
@@ -77,9 +79,10 @@ export const AudioController: React.FC<AudioControllerProps> = ({
       await ctx.resume();
     }
 
-    // Attempt to play all remote audio elements
+    // Update all remote audio elements
     (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
       audioEl.muted = !speakerEnabled;
+      audioEl.volume = speakerEnabled ? 1 : 0;
       const playPromise = audioEl.play();
       if (playPromise && playPromise.catch) {
         playPromise.catch(() => {});
@@ -104,13 +107,16 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     };
   }, [unlockAudio]);
 
-  // Sync remote streams to dedicated <audio> elements for crystal-clear mobile playback
+  // Sync remote streams to dedicated <audio> elements for crystal-clear playback
   useEffect(() => {
     const activePeerIds = Object.keys(remoteStreams);
 
     activePeerIds.forEach(peerId => {
       const stream = remoteStreams[peerId];
       if (!stream) return;
+
+      // Only mount audio element if stream has audio tracks
+      if (stream.getAudioTracks().length === 0) return;
 
       let audioEl = peerAudioElementsRef.current[peerId];
       if (!audioEl) {
@@ -125,6 +131,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({
 
       audioEl.srcObject = stream;
       audioEl.muted = !speakerEnabled;
+      audioEl.volume = speakerEnabled ? 1 : 0;
 
       const playPromise = audioEl.play();
       if (playPromise && playPromise.catch) {
@@ -147,19 +154,16 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     });
   }, [remoteStreams, speakerEnabled]);
 
-  // Toggle master speaker
-  const toggleSpeaker = () => {
-    const newState = !speakerEnabled;
-    setSpeakerEnabled(newState);
-    unlockAudio();
-
+  // Mute/unmute all peer audio elements whenever speakerEnabled changes
+  useEffect(() => {
     (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
-      audioEl.muted = !newState;
-      if (newState) {
+      audioEl.muted = !speakerEnabled;
+      audioEl.volume = speakerEnabled ? 1 : 0;
+      if (speakerEnabled) {
         audioEl.play().catch(() => {});
       }
     });
-  };
+  }, [speakerEnabled]);
 
   // Play test chime to confirm sound output
   const playSoundTest = () => {
@@ -220,13 +224,13 @@ export const AudioController: React.FC<AudioControllerProps> = ({
 
   return (
     <div className="glass rounded-2xl p-3.5 space-y-3 border border-[#c5a05933] shadow-lg">
-      {/* Mobile Audio / Video Unlock Banner */}
-      {!isAudioUnlocked && (
+      {/* Mobile Audio / Video Unlock Banner (Only shown on Mobile if audio isn't unlocked yet) */}
+      {isMobile && !isAudioUnlocked && (
         <div className="w-full bg-[#c5a05915] border border-[#c5a05966] rounded-xl p-3 flex items-center justify-between gap-2 text-xs text-[#c5a059]">
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-[#c5a059] flex-shrink-0 animate-pulse" />
             <span>
-              <strong>Handy-Audio & Video:</strong> Tippe hier, um Ton & Kamera auf deinem Smartphone freizugeben!
+              <strong>Handy-Audio & Video:</strong> Tippe hier, um Ton & Mikrofon auf deinem Smartphone freizugeben!
             </span>
           </div>
           <button
@@ -243,13 +247,13 @@ export const AudioController: React.FC<AudioControllerProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         {/* Left: Media Toggles */}
         <div className="flex items-center flex-wrap gap-2">
-          {/* Webcam Toggle Button */}
+          {/* Webcam Toggle Button (Independent Video) */}
           <button
             id="webcam-toggle-btn"
             onClick={onToggleCamera}
             className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
               isCameraActive
-                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
                 : 'glass text-[#c5a059] border-[#c5a05944] hover:bg-[#c5a05915]'
             }`}
             title={isCameraActive ? 'Kamera ist an' : 'Webcam aktivieren'}
@@ -258,8 +262,8 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             <span>{isCameraActive ? 'Kamera: AN' : 'Kamera: AUS'}</span>
           </button>
 
-          {/* Flip Camera Switch on Mobile */}
-          {isCameraActive && onSwitchFacingMode && (
+          {/* Flip Camera Switch on Mobile ONLY (Hidden on Desktop/PC) */}
+          {isMobile && isCameraActive && onSwitchFacingMode && (
             <button
               id="switch-camera-btn"
               onClick={onSwitchFacingMode}
@@ -267,17 +271,17 @@ export const AudioController: React.FC<AudioControllerProps> = ({
               title={`Kamera wechseln (aktuell: ${facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'})`}
             >
               <SwitchCamera className="w-4 h-4 text-[#c5a059]" />
-              <span className="hidden sm:inline">{facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'}</span>
+              <span>{facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'}</span>
             </button>
           )}
 
-          {/* Microphone Toggle */}
+          {/* Microphone Toggle (Independent Audio) */}
           <button
             id="mic-toggle-btn"
             onClick={onToggleMic}
             className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
               localStream && !isMicMuted
-                ? 'bg-[#c5a05922] text-[#c5a059] border-[#c5a05966] hover:bg-[#c5a05933]'
+                ? 'bg-[#c5a05922] text-[#c5a059] border-[#c5a05966] hover:bg-[#c5a05933] shadow-[0_0_10px_rgba(197,160,89,0.2)]'
                 : isMicMuted
                 ? 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25'
                 : 'glass text-zinc-400 border-white/10 hover:text-white'
@@ -288,20 +292,22 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             <span>{isMicMuted ? 'Mikro: STUMM' : 'Mikro: AN'}</span>
           </button>
 
-          {/* Master Speaker Toggle */}
-          <button
-            id="master-speaker-toggle-btn"
-            onClick={toggleSpeaker}
-            className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
-              speakerEnabled
-                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
-                : 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25'
-            }`}
-            title={speakerEnabled ? 'Lautsprecher ist aktiv' : 'Lautsprecher ist stummgeschaltet'}
-          >
-            {speakerEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            <span className="hidden sm:inline">{speakerEnabled ? 'Lautsprecher: AN' : 'Lautsprecher: STUMM'}</span>
-          </button>
+          {/* Master Speaker Toggle (Lautsprecher an/aus - Nur auf Mobilgeräten/Smartphones sichtbar) */}
+          {isMobile && (
+            <button
+              id="master-speaker-toggle-btn"
+              onClick={onToggleSpeaker}
+              className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
+                speakerEnabled
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                  : 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25'
+              }`}
+              title={speakerEnabled ? 'Handy-Lautsprecher ist aktiv' : 'Handy-Lautsprecher ist stummgeschaltet'}
+            >
+              {speakerEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              <span>{speakerEnabled ? 'Lautsprecher: AN' : 'Lautsprecher: AUS'}</span>
+            </button>
+          )}
 
           {/* Sound Test Button */}
           <button
@@ -309,10 +315,10 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             onClick={playSoundTest}
             disabled={testTonePlaying}
             className="speaker-btn flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-zinc-300 hover:text-white hover:bg-white/10 border border-white/10 text-xs font-semibold transition-all active:scale-95 cursor-pointer"
-            title="Prüft die Tonausgabe über die Handy-/Geräte-Lautsprecher"
+            title="Prüft die Tonausgabe über die Lautsprecher"
           >
             <BellRing className={`w-3.5 h-3.5 ${testTonePlaying ? 'animate-bounce text-[#c5a059]' : 'text-[#c5a059]'}`} />
-            <span>{testTonePlaying ? 'Testet...' : 'Ton-Test'}</span>
+            <span className="hidden sm:inline">{testTonePlaying ? 'Testet...' : 'Ton-Test'}</span>
           </button>
         </div>
 
@@ -328,7 +334,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({
       </div>
 
       {/* Live Video Tiles Strip (Local & Remote Webcams) */}
-      {activeVideoFeeds.length > 0 && showVideoStrip && (
+      {activeVideoFeeds.length > 0 && (
         <div className="pt-2 border-t border-white/5">
           <div className="flex items-center justify-between pb-1.5">
             <span className="text-[10px] uppercase tracking-wider text-[#c5a059] font-bold flex items-center gap-1.5">

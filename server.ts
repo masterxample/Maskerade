@@ -1,11 +1,10 @@
 import express from 'express';
 import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
-import { Server as SocketIOServer } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 
-// Types for server state
 export type RoleKey = 'kanzler' | 'strassenraeuber' | 'spion' | 'bodyguard' | 'bluthund';
 
 interface ServerCard {
@@ -26,10 +25,10 @@ interface ServerPlayer {
 }
 
 interface PendingState {
-  phase: 'response' | 'blockResponse' | 'loseInfluence' | 'exchange' | null;
   action: string;
   actorId: string;
   targetId: string | null;
+  phase: 'response' | 'blockResponse' | 'loseInfluence' | 'exchange' | null;
   responded: string[];
   block: {
     playerId: string;
@@ -50,6 +49,8 @@ interface Room {
   turnIndex: number;
   deck: ServerCard[];
   pending: PendingState | null;
+  turnDeadline: number | null;
+  _timerTimeout: NodeJS.Timeout | null;
 }
 
 const ROLES_INFO: Record<RoleKey, { name: string; titles: string[] }> = {
@@ -157,6 +158,7 @@ function publicState(room: Room) {
     started: room.started,
     hostId: room.hostId,
     turnIndex: room.turnIndex,
+    turnDeadline: room.turnDeadline,
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
@@ -207,9 +209,46 @@ async function startServer() {
     io.to(player.id).emit('yourHand', player.cards);
   }
 
+  function clearRoomTimer(room: Room) {
+    if (room._timerTimeout) {
+      clearTimeout(room._timerTimeout);
+      room._timerTimeout = null;
+    }
+    room.turnDeadline = null;
+  }
+
+  function startPhaseTimer(room: Room, seconds: number, onExpire: () => void) {
+    clearRoomTimer(room);
+    room.turnDeadline = Date.now() + seconds * 1000;
+    room._timerTimeout = setTimeout(() => {
+      room._timerTimeout = null;
+      room.turnDeadline = null;
+      onExpire();
+    }, seconds * 1000);
+    broadcast(room);
+  }
+
+  function emitCardRevealed(room: Room, player: ServerPlayer, card: ServerCard, reason: string) {
+    io.to(room.code).emit('cardRevealed', {
+      id: `reveal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      playerId: player.id,
+      playerName: player.name,
+      card: {
+        cardId: card.cardId,
+        role: card.role,
+        variantIndex: card.variantIndex,
+        displayName: card.displayName,
+        alive: card.alive
+      },
+      reason,
+      timestamp: Date.now()
+    });
+  }
+
   function checkWin(room: Room): boolean {
     const alive = alivePlayers(room);
     if (alive.length <= 1) {
+      clearRoomTimer(room);
       const winner = alive[0] ? alive[0].name : null;
       io.to(room.code).emit('gameOver', { winnerName: winner });
       room.started = false;
@@ -223,11 +262,28 @@ async function startServer() {
   function checkEliminated(room: Room, p: ServerPlayer) {
     if (influenceCount(p) === 0 && !p.eliminated) {
       p.eliminated = true;
-      log(room, `${p.name} scheidet aus — kein Einfluss mehr übrig.`);
+      log(room, `💀 ${p.name} scheidet aus — kein Hofeinfluss mehr übrig.`);
     }
   }
 
+  function startTurnTimer(room: Room) {
+    if (!room.started || checkWin(room)) return;
+    const actor = room.players[room.turnIndex];
+    if (!actor || actor.eliminated) return;
+
+    startPhaseTimer(room, 30, () => {
+      if (!room.started || room.pending) return;
+      const currentActor = room.players[room.turnIndex];
+      if (!currentActor || currentActor.eliminated) return;
+
+      log(room, `⏱️ 30s Zeit abgelaufen: ${currentActor.name} nimmt automatisch 1 Münze (Einkommen).`);
+      currentActor.coins += 1;
+      nextTurn(room);
+    });
+  }
+
   function nextTurn(room: Room) {
+    clearRoomTimer(room);
     if (room.players.length === 0) return;
     do {
       room.turnIndex = (room.turnIndex + 1) % room.players.length;
@@ -236,6 +292,7 @@ async function startServer() {
     room.pending = null;
     if (checkWin(room)) return;
     broadcast(room);
+    startTurnTimer(room);
   }
 
   function eligibleResponders(room: Room): string[] {
@@ -256,7 +313,8 @@ async function startServer() {
       const c = p.cards.find(card => card.alive);
       if (c) {
         c.alive = false;
-        log(room, `${p.name} deckt die letzte Hofkarte auf: ${c.displayName} (${ROLES_INFO[c.role].name}).`);
+        log(room, `💀 ${p.name} deckt die letzte Hofkarte auf: ${c.displayName} (${ROLES_INFO[c.role].name}).`);
+        emitCardRevealed(room, p, c, `${p.name} verliert die letzte Hofkarte: ${c.displayName}`);
       }
       checkEliminated(room, p);
       broadcast(room);
@@ -279,7 +337,26 @@ async function startServer() {
     room.pending.phase = 'loseInfluence';
     room.pending.waitingOn = playerId;
     room.pending._loseCallback = callback;
-    broadcast(room);
+
+    // 30s Timer to pick card
+    startPhaseTimer(room, 30, () => {
+      if (!room.started || !room.pending || room.pending.phase !== 'loseInfluence') return;
+      const targetP = room.players.find(pl => pl.id === room.pending?.waitingOn);
+      if (!targetP) return;
+
+      const aliveCard = targetP.cards.find(c => c.alive);
+      if (aliveCard) {
+        aliveCard.alive = false;
+        log(room, `⏱️ 30s Zeit abgelaufen: ${targetP.name} verliert automatisch ${aliveCard.displayName}.`);
+        emitCardRevealed(room, targetP, aliveCard, `Zeit abgelaufen: ${targetP.name} verliert ${aliveCard.displayName}`);
+        checkEliminated(room, targetP);
+        const cb = room.pending._loseCallback;
+        room.pending._loseCallback = null;
+        room.pending.waitingOn = null;
+        broadcast(room);
+        if (!checkWin(room) && cb) cb();
+      }
+    });
 
     const aliveCards = p.cards.filter(c => c.alive);
     io.to(playerId).emit('chooseLoseCard', aliveCards);
@@ -290,14 +367,16 @@ async function startServer() {
     claimPlayerId: string,
     claimRole: RoleKey,
     challengerId: string,
-    callback: (success: boolean) => void
+    callback: (wasBluff: boolean) => void
   ) {
     const claimPlayer = room.players.find(p => p.id === claimPlayerId);
     if (!claimPlayer) return;
 
     const hasCard = claimPlayer.cards.find(c => c.alive && c.role === claimRole);
     if (hasCard) {
-      // Player really had the role! Replace card in deck and draw a new one
+      // Player really had the role! Show card to everyone, replace card in deck and draw a new one
+      emitCardRevealed(room, claimPlayer, hasCard, `✓ ${claimPlayer.name} beweist die Rolle wahrheitsgemäß mit ${hasCard.displayName}!`);
+      
       claimPlayer.cards = claimPlayer.cards.filter(c => c !== hasCard);
       room.deck.push(hasCard);
       room.deck = shuffle(room.deck);
@@ -327,7 +406,19 @@ async function startServer() {
     room.pending.phase = 'exchange';
     room.pending.waitingOn = playerId;
     room.pending._exchangePool = drawn;
-    broadcast(room);
+
+    // 30s Timer for Exchange
+    startPhaseTimer(room, 30, () => {
+      if (!room.started || !room.pending || room.pending.phase !== 'exchange') return;
+      const exPlayer = room.players.find(pl => pl.id === room.pending?.waitingOn);
+      if (exPlayer && room.pending._exchangePool) {
+        room.deck = shuffle(room.deck.concat(room.pending._exchangePool));
+        log(room, `⏱️ 30s Zeit abgelaufen: ${exPlayer.name} behält die aktuellen Hofkarten.`);
+        room.pending = null;
+        broadcast(room);
+        nextTurn(room);
+      }
+    });
 
     const aliveCards = p.cards.filter(c => c.alive);
     io.to(playerId).emit('chooseExchange', {
@@ -338,6 +429,7 @@ async function startServer() {
   }
 
   function resolveAction(room: Room) {
+    clearRoomTimer(room);
     if (!room.pending) return;
     const actor = room.players.find(p => p.id === room.pending!.actorId);
     const target = room.pending.targetId ? room.players.find(p => p.id === room.pending!.targetId) : null;
@@ -413,7 +505,9 @@ async function startServer() {
         players: [],
         turnIndex: 0,
         deck: [],
-        pending: null
+        pending: null,
+        turnDeadline: null,
+        _timerTimeout: null
       };
 
       const playerNameStr = (name || 'Spieler').trim().slice(0, 20);
@@ -468,7 +562,41 @@ async function startServer() {
       io.to(room.code).emit('roomUpdate', publicState(room));
     });
 
+    socket.on('updateMaxPlayers', ({ maxPlayers }: { maxPlayers: number }) => {
+      const room = rooms[socket.data.roomCode];
+      if (!room || room.hostId !== socket.id || room.started) return;
+      const clamped = Math.max(2, Math.min(6, parseInt(String(maxPlayers), 10) || 4));
+      room.maxPlayers = clamped;
+      io.to(room.code).emit('roomUpdate', publicState(room));
+      log(room, `👥 Maximale Spieleranzahl auf ${clamped} Spieler angepasst.`);
+    });
+
+    socket.on('kickPlayer', ({ playerId }: { playerId: string }) => {
+      const room = rooms[socket.data.roomCode];
+      if (!room || room.hostId !== socket.id || room.started) return;
+      if (playerId === socket.id) return; // Cannot kick host itself
+
+      const kickedIndex = room.players.findIndex(p => p.id === playerId);
+      if (kickedIndex !== -1) {
+        const kickedPlayer = room.players[kickedIndex];
+        room.players.splice(kickedIndex, 1);
+
+        // Notify the kicked player specifically
+        const kickedSocket = io.sockets.sockets.get(playerId);
+        if (kickedSocket) {
+          kickedSocket.leave(room.code);
+          kickedSocket.data.roomCode = null;
+          kickedSocket.emit('kickedFromRoom', { reason: 'Du wurdest vom Spielleiter aus der Lobby entfernt.' });
+        }
+
+        io.to(room.code).emit('roomUpdate', publicState(room));
+        io.to(room.code).emit('peerLeft', playerId);
+        log(room, `🚪 ${kickedPlayer.name} wurde vom Spielleiter aus der Lobby entfernt.`);
+      }
+    });
+
     function initiateGame(room: Room, isRematch: boolean = false) {
+      clearRoomTimer(room);
       room.started = true;
       room.deck = buildDeck();
       room.pending = null;
@@ -487,7 +615,7 @@ async function startServer() {
         const card2 = room.deck.pop();
         p.cards = [
           card1 ? { ...card1, alive: true } : { cardId: 'kanzler_1', role: 'kanzler', variantIndex: 0, displayName: 'Kanzler', alive: true },
-          card2 ? { ...card2, alive: true } : { cardId: 'spion_1', role: 'spion', variantIndex: 0, displayName: 'Spion', alive: true }
+          card2 ? { ...card2, role: 'spion', variantIndex: 0, displayName: 'Spion', alive: true } : { cardId: 'spion_1', role: 'spion', variantIndex: 0, displayName: 'Spion', alive: true }
         ];
       });
 
@@ -499,6 +627,8 @@ async function startServer() {
       } else {
         log(room, 'Maskerade beginnt! Die Hofkarten wurden verteilt. Jeder Spieler startet mit 2 Münzen.');
       }
+
+      startTurnTimer(room);
     }
 
     socket.on('startGame', () => {
@@ -570,7 +700,13 @@ async function startServer() {
       room.pending.phase = 'response';
       const claimedRoleName = def.role ? ` (behauptet: ${ROLES_INFO[def.role].name})` : '';
       log(room, `${actor.name} beansprucht „${def.label}“${claimedRoleName}${target ? ` gegen ${target.name}` : ''}.`);
-      broadcast(room);
+
+      // 30s response timer
+      startPhaseTimer(room, 30, () => {
+        if (!room.started || !room.pending || room.pending.phase !== 'response') return;
+        log(room, `⏱️ 30s Reaktionszeit abgelaufen: Niemand hat widersprochen (Stillschweigend akzeptiert).`);
+        resolveAction(room);
+      });
     });
 
     socket.on('respondPass', () => {
@@ -604,6 +740,7 @@ async function startServer() {
       const actor = room.players.find(p => p.id === room.pending!.actorId);
       if (!actor) return;
 
+      clearRoomTimer(room);
       log(room, `⚡ ${playerName(room, challengerId)} zweifelt die Behauptung von ${actor.name} an!`);
 
       resolveChallenge(room, room.pending.actorId, def.role, challengerId, (wasBluff) => {
@@ -633,7 +770,14 @@ async function startServer() {
       room.pending.blockResponded = [];
 
       log(room, `🛡️ ${playerName(room, blockerId)} blockt mit ${ROLES_INFO[role].name}.`);
-      broadcast(room);
+
+      // 30s block response timer
+      startPhaseTimer(room, 30, () => {
+        if (!room.started || !room.pending || room.pending.phase !== 'blockResponse' || !room.pending.block) return;
+        log(room, `⏱️ 30s Reaktionszeit abgelaufen: Niemand hat den Block angezweifelt.`);
+        room.pending = null;
+        nextTurn(room);
+      });
     });
 
     socket.on('blockRespondPass', () => {
@@ -668,6 +812,7 @@ async function startServer() {
       const block = room.pending.block;
       if (challengerId === block.playerId) return;
 
+      clearRoomTimer(room);
       log(room, `⚡ ${playerName(room, challengerId)} zweifelt den Block von ${playerName(room, block.playerId)} an!`);
 
       resolveChallenge(room, block.playerId, block.role, challengerId, (wasBluff) => {
@@ -694,8 +839,10 @@ async function startServer() {
       const card = p.cards.find(c => c.cardId === cardId && c.alive);
       if (!card) return;
 
+      clearRoomTimer(room);
       card.alive = false;
       log(room, `💀 ${p.name} deckt ${card.displayName} (${ROLES_INFO[card.role].name}) auf und verliert 1 Hofeinfluss.`);
+      emitCardRevealed(room, p, card, `${p.name} verliert die Hofkarte ${card.displayName}`);
       checkEliminated(room, p);
 
       const cb = room.pending._loseCallback;
@@ -716,6 +863,7 @@ async function startServer() {
       const p = room.players.find(pl => pl.id === socket.id);
       if (!p) return;
 
+      clearRoomTimer(room);
       const aliveCards = p.cards.filter(c => c.alive);
       const deadCards = p.cards.filter(c => !c.alive);
       const drawnCards = room.pending._exchangePool || [];
@@ -743,6 +891,7 @@ async function startServer() {
       const room = rooms[socket.data.roomCode];
       if (!room || room.hostId !== socketId) return;
 
+      clearRoomTimer(room);
       room.started = false;
       room.pending = null;
       room.turnIndex = 0;
@@ -770,7 +919,14 @@ async function startServer() {
       io.to(to).emit('webrtc-signal', { from: socket.id, data });
     });
 
-    // Audio status sync
+    // Audio/Video status sync
+    socket.on('media-status', (status: { hasVideo: boolean; hasAudio: boolean; isSpeaking: boolean }) => {
+      const code = socket.data.roomCode;
+      if (code) {
+        socket.to(code).emit('peer-media-status', { from: socket.id, status });
+      }
+    });
+
     socket.on('audio-status', (status: { speaking: boolean; muted: boolean }) => {
       const code = socket.data.roomCode;
       if (code) {
@@ -788,6 +944,7 @@ async function startServer() {
       if (!room.started) {
         room.players = room.players.filter(p => p.id !== socket.id);
         if (room.players.length === 0) {
+          clearRoomTimer(room);
           delete rooms[code];
           return;
         }

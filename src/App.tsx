@@ -1,19 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { GameState, PlayerCardState, ActionKey, RoleKey, PlayerState } from './types';
+import { GameState, PlayerCardState, ActionKey, RoleKey, PlayerState, CardRevealEvent } from './types';
 import { CardDisplay } from './components/CardDisplay';
 import { PlayerCard } from './components/PlayerCard';
 import { GameActionPanel } from './components/GameActionPanel';
 import { PendingBanner } from './components/PendingBanner';
 import { AudioController } from './components/AudioController';
 import { CardSelectionModal } from './components/CardSelectionModal';
+import { CardRevealModal } from './components/CardRevealModal';
+import { TurnTimerBar } from './components/TurnTimerBar';
 import { GameRulesDrawer } from './components/GameRulesDrawer';
 import { ALL_CARD_DEFS, getCardDef } from './data/cards';
 import {
   Crown,
   Users,
+  UserMinus,
   Video,
   VideoOff,
+  Mic,
+  MicOff,
   Volume2,
   BookOpen,
   Scroll,
@@ -42,6 +47,7 @@ export default function App() {
   const [myHand, setMyHand] = useState<PlayerCardState[]>([]);
   const [gameLogs, setGameLogs] = useState<string[]>([]);
   const [gameOverWinner, setGameOverWinner] = useState<string | null>(null);
+  const [revealedCardEvent, setRevealedCardEvent] = useState<CardRevealEvent | null>(null);
 
   // Modal states
   const [loseCardModalList, setLoseCardModalList] = useState<PlayerCardState[] | null>(null);
@@ -56,8 +62,10 @@ export default function App() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const pendingCandidatesRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
@@ -65,7 +73,8 @@ export default function App() {
   // Socket Connection setup
   useEffect(() => {
     const newSocket = io({
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 10
     });
 
     newSocket.on('connect', () => {
@@ -75,8 +84,8 @@ export default function App() {
     newSocket.on('joined', ({ code, youAreHost }: { code: string; youAreHost: boolean }) => {
       setRoomCode(code);
       setIsHost(youAreHost);
-      setErrorMessage('');
       setView('lobby');
+      setErrorMessage('');
     });
 
     newSocket.on('errorMsg', (msg: string) => {
@@ -103,8 +112,21 @@ export default function App() {
       setMyHand(cards);
     });
 
+    newSocket.on('cardRevealed', (event: CardRevealEvent) => {
+      setRevealedCardEvent(event);
+    });
+
     newSocket.on('log', (msg: string) => {
       setGameLogs(prev => [`› ${msg}`, ...prev.slice(0, 80)]);
+    });
+
+    newSocket.on('kickedFromRoom', ({ reason }: { reason: string }) => {
+      setView('setup');
+      setRoomCode('');
+      setGameState(null);
+      setMyHand([]);
+      setGameLogs([]);
+      setErrorMessage(reason || 'Du wurdest vom Spielleiter aus der Lobby entfernt.');
     });
 
     newSocket.on('gameOver', ({ winnerName }: { winnerName: string | null }) => {
@@ -119,6 +141,7 @@ export default function App() {
       setGameLogs([]);
       setLoseCardModalList(null);
       setExchangeModalData(null);
+      setRevealedCardEvent(null);
     });
 
     newSocket.on('chooseLoseCard', (aliveCards: PlayerCardState[]) => {
@@ -272,9 +295,9 @@ export default function App() {
     });
   };
 
-  // Sync peers when players join
+  // Sync peers when players join in lobby or game
   useEffect(() => {
-    if (!isCameraActive || !gameState || !socket) return;
+    if (!gameState || !socket) return;
 
     gameState.players.forEach(p => {
       if (p.id === myId || p.eliminated) return;
@@ -286,86 +309,158 @@ export default function App() {
         }
       }
     });
-  }, [gameState, isCameraActive, myId, socket, createPeerConnection]);
+  }, [gameState, myId, socket, createPeerConnection]);
 
-  // Robust getUserMedia with multiple fallbacks for mobile browsers
-  const acquireMediaStream = async (facing: 'user' | 'environment') => {
+  // Push local track updates to all active peers
+  const syncLocalTracksToPeers = useCallback((stream: MediaStream | null) => {
+    (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
+      const senders = pc.getSenders();
+      if (!stream) {
+        senders.forEach(sender => pc.removeTrack(sender));
+        return;
+      }
+
+      // Sync Audio Tracks
+      const audioTrack = stream.getAudioTracks()[0] || null;
+      const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+      if (audioSender) {
+        if (audioTrack) audioSender.replaceTrack(audioTrack);
+        else pc.removeTrack(audioSender);
+      } else if (audioTrack) {
+        pc.addTrack(audioTrack, stream);
+      }
+
+      // Sync Video Tracks
+      const videoTrack = stream.getVideoTracks()[0] || null;
+      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+      if (videoSender) {
+        if (videoTrack) videoSender.replaceTrack(videoTrack);
+        else pc.removeTrack(videoSender);
+      } else if (videoTrack) {
+        pc.addTrack(videoTrack, stream);
+      }
+    });
+  }, []);
+
+  // Independent Video / Camera Toggle
+  const toggleCamera = async () => {
+    if (isCameraActive) {
+      // Turn camera OFF
+      if (localStreamRef.current) {
+        const videoTracks = localStreamRef.current.getVideoTracks();
+        videoTracks.forEach(t => {
+          t.stop();
+          localStreamRef.current?.removeTrack(t);
+        });
+        const remainingTracks = localStreamRef.current.getTracks();
+        if (remainingTracks.length === 0) {
+          localStreamRef.current = null;
+          setLocalStream(null);
+        } else {
+          const updated = new MediaStream(remainingTracks);
+          localStreamRef.current = updated;
+          setLocalStream(updated);
+        }
+        syncLocalTracksToPeers(localStreamRef.current);
+      }
+      setIsCameraActive(false);
+      return;
+    }
+
+    // Turn camera ON
     try {
-      return await navigator.mediaDevices.getUserMedia({
+      const videoStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: facing },
+          facingMode: { ideal: facingMode },
           width: { ideal: 640, max: 1280 },
           height: { ideal: 480, max: 720 },
           frameRate: { ideal: 24, max: 30 }
         },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+        audio: false
       });
-    } catch (err1) {
-      console.warn('Optimal stream constraints failed, attempting fallback 1:', err1);
-      try {
-        return await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing },
-          audio: true
-        });
-      } catch (err2) {
-        console.warn('Fallback 1 failed, attempting fallback 2 (general video+audio):', err2);
-        try {
-          return await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-          });
-        } catch (err3) {
-          console.warn('Fallback 2 failed, attempting video-only:', err3);
-          return await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false
-          });
+
+      const newVideoTrack = videoStream.getVideoTracks()[0];
+      if (newVideoTrack) {
+        let stream = localStreamRef.current;
+        if (!stream) {
+          stream = new MediaStream([newVideoTrack]);
+        } else {
+          stream.addTrack(newVideoTrack);
+          stream = new MediaStream(stream.getTracks());
         }
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        setIsCameraActive(true);
+        syncLocalTracksToPeers(stream);
+      }
+    } catch (err) {
+      console.warn('Video access error, fallback to basic constraints:', err);
+      try {
+        const videoStreamFallback = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const newVideoTrack = videoStreamFallback.getVideoTracks()[0];
+        if (newVideoTrack) {
+          let stream = localStreamRef.current;
+          if (!stream) {
+            stream = new MediaStream([newVideoTrack]);
+          } else {
+            stream.addTrack(newVideoTrack);
+            stream = new MediaStream(stream.getTracks());
+          }
+          localStreamRef.current = stream;
+          setLocalStream(stream);
+          setIsCameraActive(true);
+          syncLocalTracksToPeers(stream);
+        }
+      } catch (err2) {
+        console.error('Camera permission denied:', err2);
+        alert('Kamera konnte nicht aktiviert werden. Bitte erlaube den Kamera-Zugriff in deinen Browser-Einstellungen.');
       }
     }
   };
 
-  // Media Toggle (Camera & Mic)
-  const toggleCameraAndMic = async () => {
-    if (isCameraActive) {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
-      }
-      localStreamRef.current = null;
-      setLocalStream(null);
-      setIsCameraActive(false);
-
-      Object.keys(peerConnectionsRef.current).forEach(closePeerConnection);
+  // Independent Microphone Toggle
+  const toggleMic = async () => {
+    if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMicMuted(!audioTrack.enabled);
       return;
     }
 
+    // Microphone not yet requested - get audio stream only
     try {
-      const stream = await acquireMediaStream(facingMode);
-      localStreamRef.current = stream;
-      setLocalStream(stream);
-      setIsCameraActive(true);
-      setIsMicMuted(false);
-
-      // Add tracks to existing peer connections
-      (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
-        const senders = pc.getSenders();
-        stream.getTracks().forEach(track => {
-          const sender = senders.find(s => s.track && s.track.kind === track.kind);
-          if (sender) {
-            sender.replaceTrack(track);
-          } else {
-            pc.addTrack(track, stream);
-          }
-        });
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: false
       });
-    } catch (err: any) {
-      console.error('Media stream error:', err);
-      alert('Kamera konnte nicht aktiviert werden. Bitte erlaube den Kamera-Zugriff in den Browser-Einstellungen deines Smartphones (Safari / Chrome).');
+
+      const newAudioTrack = audioStream.getAudioTracks()[0];
+      if (newAudioTrack) {
+        let stream = localStreamRef.current;
+        if (!stream) {
+          stream = new MediaStream([newAudioTrack]);
+        } else {
+          stream.addTrack(newAudioTrack);
+          stream = new MediaStream(stream.getTracks());
+        }
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        setIsMicMuted(false);
+        syncLocalTracksToPeers(stream);
+      }
+    } catch (err) {
+      console.error('Microphone permission error:', err);
+      alert('Mikrofon konnte nicht aktiviert werden. Bitte erlaube den Mikrofon-Zugriff in deinen Browser-Einstellungen.');
     }
+  };
+
+  // Master Speaker Toggle (Lautsprecher an/aus)
+  const toggleSpeaker = () => {
+    setSpeakerEnabled(prev => !prev);
   };
 
   // Flip camera front/back on mobile
@@ -375,39 +470,27 @@ export default function App() {
 
     if (isCameraActive && localStreamRef.current) {
       try {
-        localStreamRef.current.getVideoTracks().forEach(t => t.stop());
+        const oldVideoTracks = localStreamRef.current.getVideoTracks();
+        oldVideoTracks.forEach(t => {
+          t.stop();
+          localStreamRef.current?.removeTrack(t);
+        });
+
         const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: nextFacing }, width: { ideal: 640 }, height: { ideal: 480 } }
+          video: { facingMode: { ideal: nextFacing }, width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
         });
         const newVideoTrack = newStream.getVideoTracks()[0];
 
         if (newVideoTrack) {
-          const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
-          if (oldVideoTrack) {
-            localStreamRef.current.removeTrack(oldVideoTrack);
-          }
           localStreamRef.current.addTrack(newVideoTrack);
-          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-
-          (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
-            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-              sender.replaceTrack(newVideoTrack);
-            }
-          });
+          const updated = new MediaStream(localStreamRef.current.getTracks());
+          localStreamRef.current = updated;
+          setLocalStream(updated);
+          syncLocalTracksToPeers(updated);
         }
       } catch (e) {
         console.error('Failed to switch camera facing mode:', e);
-      }
-    }
-  };
-
-  const toggleMicMute = () => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicMuted(!audioTrack.enabled);
       }
     }
   };
@@ -430,6 +513,18 @@ export default function App() {
       return;
     }
     socket.emit('joinRoom', { name, code });
+  };
+
+  const handleUpdateMaxPlayers = (newMax: number) => {
+    if (socket && isHost) {
+      socket.emit('updateMaxPlayers', { maxPlayers: newMax });
+    }
+  };
+
+  const handleKickPlayer = (playerId: string) => {
+    if (socket && isHost) {
+      socket.emit('kickPlayer', { playerId });
+    }
   };
 
   const handleStartGame = () => {
@@ -476,126 +571,166 @@ export default function App() {
     }
   };
 
-  // Helper values
+  // Helper variables for game view
   const myPlayer = gameState?.players.find(p => p.id === myId);
-  const currentTurnPlayer = gameState ? gameState.players[gameState.turnIndex] : null;
-  const isMyTurn = currentTurnPlayer?.id === myId && !gameState?.pending;
+  const currentTurnPlayer = gameState?.started ? gameState.players[gameState.turnIndex] : null;
+  const isMyTurn = currentTurnPlayer?.id === myId;
 
   return (
-    <div className="min-h-screen bg-[#0d0d0d] text-[#e0e0e0] flex flex-col font-sans selection:bg-[#c5a059]/30 selection:text-[#c5a059]">
-      {/* Top Navigation - Sophisticated Dark */}
-      <header className="w-full h-18 sm:h-20 flex items-center justify-between px-4 sm:px-8 border-b border-[#c5a05933] bg-[#0d0d0d]/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="flex items-center gap-3 sm:gap-6">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center text-black font-serif font-bold text-lg sm:text-xl shadow-[0_0_12px_rgba(197,160,89,0.3)] select-none">
-            M
+    <div className="min-h-screen flex flex-col bg-[#0a0a0c] text-[#e0e0e0] relative select-none">
+      {/* Background ambient lighting */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-[#c5a0590c] blur-[130px] rounded-full" />
+        <div className="absolute bottom-0 right-0 w-[450px] h-[300px] bg-[#4a3b1d0a] blur-[120px] rounded-full" />
+      </div>
+
+      {/* Header Bar */}
+      <header className="relative z-10 h-16 border-b border-white/5 bg-[#0e0e11]/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center shadow-[0_0_12px_rgba(197,160,89,0.3)]">
+            <Sparkles className="w-5 h-5 text-black" />
           </div>
           <div>
-            <div className="flex items-baseline gap-2">
-              <h1 className="text-2xl sm:text-3xl font-serif tracking-[0.2em] gold-accent font-bold">
-                MASKERADE
-              </h1>
-              <span className="hidden md:inline text-[10px] uppercase tracking-wider opacity-40">
-                Edition Royale
-              </span>
-            </div>
-            <p className="text-[10px] uppercase tracking-widest text-[#c5a059]/70 font-medium">
-              Bluffen · Täuschen · Überleben
+            <h1 className="font-serif text-lg sm:text-xl font-bold tracking-wider gold-accent flex items-center gap-1.5">
+              MASKERADE
+            </h1>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">
+              Spiel der Täuschung & Hofintrigen
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-5">
+        <div className="flex items-center gap-3">
+          {/* Rules / Codex Button */}
+          <button
+            id="open-rules-btn"
+            onClick={() => setIsRulesOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass hover:bg-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer border border-white/10"
+            title="Spielregeln & Hofkarten-Übersicht"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-[#c5a059]" />
+            <span className="hidden sm:inline">Codex & Rollen</span>
+          </button>
+
+          {/* Room Code Badge */}
           {roomCode && (
-            <div className="hidden sm:flex flex-col text-right">
-              <span className="text-[9px] uppercase tracking-widest opacity-50">Raum-Code</span>
-              <span className="font-mono gold-accent font-bold text-sm tracking-wider">#{roomCode}</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#c5a05915] border border-[#c5a05944]">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-400">Raum:</span>
+              <span className="font-mono font-bold text-xs gold-accent tracking-widest">{roomCode}</span>
             </div>
           )}
 
-          <button
-            id="rules-toggle-btn"
-            onClick={() => setIsRulesOpen(true)}
-            className="speaker-btn px-3.5 py-2 rounded-full glass text-xs font-semibold gold-accent flex items-center gap-2 border border-[#c5a05944] hover:bg-[#c5a05915] transition-all cursor-pointer"
-          >
-            <BookOpen className="w-4 h-4 text-[#c5a059]" />
-            <span className="hidden sm:inline">Regeln & Karten</span>
-          </button>
+          {/* Leave Button */}
+          {view !== 'setup' && (
+            <button
+              id="leave-room-btn"
+              onClick={() => {
+                socket?.disconnect();
+                window.location.reload();
+              }}
+              className="p-2 rounded-xl glass hover:bg-red-500/20 hover:text-red-300 text-zinc-400 transition-all cursor-pointer"
+              title="Raum verlassen"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="w-full max-w-6xl mx-auto flex-1 flex flex-col p-3 sm:p-6">
+      <main className="relative z-10 flex-1 flex flex-col max-w-6xl w-full mx-auto p-4 sm:p-6 lg:p-8">
         {/* ========================================================================= */}
-        {/* VIEW 1: SETUP / LOGIN (NO "Spiel betreten oder Raum erstellen" HEADING) */}
+        {/* VIEW 1: SETUP (Create / Join Room) */}
         {/* ========================================================================= */}
         {view === 'setup' && (
-          <div className="max-w-md w-full mx-auto my-auto py-8">
+          <div className="max-w-md w-full mx-auto my-auto py-8 space-y-6">
             <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-6">
-              {/* Name Input */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-[#c5a059] uppercase tracking-[0.15em] block">
-                  Dein Spielername
+              <div className="text-center space-y-2">
+                <span className="text-[10px] uppercase tracking-[0.25em] gold-accent font-semibold">
+                  Hofprotokoll
+                </span>
+                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#e0e0e0]">
+                  Betrete den Hofstaat
+                </h2>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Wähle deinen Namen für den Maskenball und erstelle einen neuen Salon oder trete einer bestehenden Runde bei.
+                </p>
+              </div>
+
+              {/* Name input */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold">
+                  Dein Name / Titel
                 </label>
                 <input
                   id="player-name-input"
                   type="text"
-                  placeholder="Z.B. Baron von Münchhausen"
-                  maxLength={20}
+                  placeholder="z. B. Graf Dorian oder Lady Elena"
                   value={playerName}
+                  maxLength={20}
                   onChange={e => setPlayerName(e.target.value)}
                   className="w-full px-4 py-3 bg-[#141414] border border-[#2a2a2a] rounded-xl text-[#e0e0e0] placeholder:text-zinc-600 text-sm focus:outline-none focus:border-[#c5a059] transition-colors"
                 />
               </div>
 
-              {/* Create Room Section */}
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-bold gold-accent font-serif">
-                  <Sparkles className="w-3.5 h-3.5 text-[#c5a059]" />
-                  <span>Neuen Raum eröffnen</span>
+              {/* Create Room Box */}
+              <div className="p-4 rounded-2xl bg-black/40 border border-white/5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <h3 className="font-serif font-bold text-sm text-[#e0e0e0]">
+                      Neuen Salon eröffnen
+                    </h3>
+                    <p className="text-[11px] text-zinc-400">
+                      Erstelle einen Raum und lade Mitspieler ein
+                    </p>
+                  </div>
+                  <Users className="w-5 h-5 text-[#c5a059]" />
                 </div>
-                <div className="flex items-center gap-3">
-                  <select
-                    id="max-players-select"
+
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-zinc-400">
+                    <span>Spieleranzahl</span>
+                    <span className="font-mono text-[#c5a059] font-bold">{maxPlayers} Spieler</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={2}
+                    max={6}
                     value={maxPlayers}
                     onChange={e => setMaxPlayers(parseInt(e.target.value, 10))}
-                    className="px-3.5 py-3 bg-[#141414] border border-[#2a2a2a] rounded-xl text-xs text-[#e0e0e0] focus:outline-none focus:border-[#c5a059]"
-                  >
-                    <option value="2">2 Spieler</option>
-                    <option value="3">3 Spieler</option>
-                    <option value="4">4 Spieler</option>
-                    <option value="5">5 Spieler</option>
-                    <option value="6">6 Spieler</option>
-                  </select>
-                  <button
-                    id="create-room-btn"
-                    onClick={handleCreateRoom}
-                    className="flex-1 py-3 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-wider text-xs sm:text-sm rounded-xl shadow-[0_0_15px_rgba(197,160,89,0.25)] transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Play className="w-4 h-4 fill-black" />
-                    <span>Raum erstellen</span>
-                  </button>
+                    className="w-full accent-[#c5a059] cursor-pointer"
+                  />
                 </div>
+
+                <button
+                  id="create-room-btn"
+                  onClick={handleCreateRoom}
+                  className="w-full py-3.5 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-widest text-xs rounded-xl shadow-[0_0_20px_rgba(197,160,89,0.3)] transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Crown className="w-4 h-4" />
+                  <span>Salon Erstellen</span>
+                </button>
               </div>
 
-              <div className="relative flex py-2 items-center">
-                <div className="flex-grow border-t border-white/5"></div>
-                <span className="flex-shrink mx-4 text-zinc-500 text-[10px] uppercase tracking-[0.2em]">Oder</span>
-                <div className="flex-grow border-t border-white/5"></div>
+              {/* Divider */}
+              <div className="flex items-center gap-3 text-xs text-zinc-600 uppercase tracking-widest font-mono">
+                <div className="flex-1 h-px bg-white/10"></div>
+                <span>Oder</span>
+                <div className="flex-1 h-px bg-white/10"></div>
               </div>
 
-              {/* Join Room Section */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-bold text-zinc-300 font-serif">
-                  <Users className="w-3.5 h-3.5 text-[#c5a059]" />
-                  <span>Bestehendem Raum beitreten</span>
-                </div>
+              {/* Join Room Box */}
+              <div className="space-y-2">
+                <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-semibold">
+                  Raum-Code (4 Zeichen)
+                </label>
                 <div className="flex gap-2">
                   <input
-                    id="room-code-input"
+                    id="join-code-input"
                     type="text"
-                    placeholder="CODE (Z.B. 4X9A)"
-                    maxLength={4}
+                    placeholder="ABCD"
                     value={joinCode}
+                    maxLength={4}
                     onChange={e => setJoinCode(e.target.value.toUpperCase())}
                     className="flex-1 px-4 py-2.5 bg-[#141414] border border-[#2a2a2a] rounded-xl text-[#e0e0e0] placeholder:text-zinc-600 text-sm uppercase tracking-widest font-mono focus:outline-none focus:border-[#c5a059] transition-colors"
                   />
@@ -643,6 +778,42 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Lobby Host: Player Count Adjustment */}
+              {isHost && (
+                <div className="flex items-center justify-between p-3.5 glass rounded-xl border border-[#c5a05933] bg-[#c5a05908]">
+                  <div className="flex items-center gap-2.5">
+                    <Users className="w-4 h-4 text-[#c5a059] flex-shrink-0" />
+                    <div className="text-left">
+                      <div className="text-xs font-semibold text-[#e0e0e0]">Maximale Spieleranzahl</div>
+                      <div className="text-[10px] text-zinc-400">Option nur für den Spielleiter</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      id="decrease-max-players-btn"
+                      onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers - 1)}
+                      disabled={gameState.maxPlayers <= Math.max(2, gameState.players.length)}
+                      className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
+                      title="Spieleranzahl verringern"
+                    >
+                      -
+                    </button>
+                    <span className="font-mono text-xs sm:text-sm font-bold text-[#e0e0e0] px-1.5 whitespace-nowrap">
+                      {gameState.maxPlayers} Spieler
+                    </span>
+                    <button
+                      id="increase-max-players-btn"
+                      onClick={() => handleUpdateMaxPlayers(gameState.maxPlayers + 1)}
+                      disabled={gameState.maxPlayers >= 6}
+                      className="w-8 h-8 rounded-lg glass border border-[#c5a05944] text-[#c5a059] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#c5a05922] flex items-center justify-center font-bold text-base cursor-pointer active:scale-95 transition-all"
+                      title="Spieleranzahl erhöhen"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Player list */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-zinc-400 font-semibold px-2">
@@ -654,30 +825,46 @@ export default function App() {
                   {gameState.players.map(p => (
                     <div
                       key={p.id}
-                      className="flex items-center justify-between p-3.5 glass rounded-xl border border-white/5"
+                      className="flex items-center justify-between p-3.5 glass rounded-xl border border-white/5 gap-3"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center font-bold text-xs text-black">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#c5a059] to-[#8a6d3b] flex items-center justify-center font-bold text-xs text-black flex-shrink-0">
                           {p.name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-[#e0e0e0]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-semibold text-sm text-[#e0e0e0] truncate">
                             {p.name}
                           </span>
                           {p.id === gameState.hostId && (
-                            <Crown className="w-3.5 h-3.5 text-[#c5a059]" title="Raumeröffner" />
+                            <Crown className="w-3.5 h-3.5 text-[#c5a059] flex-shrink-0" title="Spielleiter" />
                           )}
                           {p.id === myId && (
-                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944]">
+                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944] flex-shrink-0">
                               Du
                             </span>
                           )}
                         </div>
                       </div>
-                      <span className="text-xs font-semibold text-emerald-400/90 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                        Bereit
-                      </span>
+
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-xs font-semibold text-emerald-400/90 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          Bereit
+                        </span>
+
+                        {/* Kick Button for Host (shown for other players) */}
+                        {isHost && p.id !== myId && (
+                          <button
+                            id={`kick-player-${p.id}-btn`}
+                            onClick={() => handleKickPlayer(p.id)}
+                            className="p-1.5 rounded-lg glass hover:bg-red-500/20 hover:text-red-300 text-zinc-400 border border-red-500/20 hover:border-red-500/50 transition-all cursor-pointer active:scale-95 flex items-center gap-1 text-[11px]"
+                            title={`${p.name} aus der Lobby entfernen`}
+                          >
+                            <UserMinus className="w-3.5 h-3.5 text-red-400" />
+                            <span className="hidden sm:inline text-red-400 font-medium">Entfernen</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -689,8 +876,10 @@ export default function App() {
                 remoteStreams={remoteStreams}
                 isCameraActive={isCameraActive}
                 isMicMuted={isMicMuted}
-                onToggleCamera={toggleCameraAndMic}
-                onToggleMic={toggleMicMute}
+                speakerEnabled={speakerEnabled}
+                onToggleCamera={toggleCamera}
+                onToggleMic={toggleMic}
+                onToggleSpeaker={toggleSpeaker}
                 onSwitchFacingMode={switchFacingMode}
                 facingMode={facingMode}
                 players={gameState.players}
@@ -749,14 +938,29 @@ export default function App() {
               </div>
             </div>
 
-            {/* Mobile Sound & Video Controller */}
+            {/* Turn & Action Countdown Timer (30s auto-pass / einkommen) */}
+            <TurnTimerBar
+              turnDeadline={gameState.turnDeadline}
+              totalSeconds={30}
+              label={
+                gameState.pending
+                  ? 'Reaktionszeit (Stillschweigen bei Ablauf)'
+                  : isMyTurn
+                  ? 'Deine Zugzeit (Autom. Einkommen bei 0s)'
+                  : `Zugzeit von ${currentTurnPlayer?.name}`
+              }
+            />
+
+            {/* Sound & Video Controller */}
             <AudioController
               localStream={localStream}
               remoteStreams={remoteStreams}
               isCameraActive={isCameraActive}
               isMicMuted={isMicMuted}
-              onToggleCamera={toggleCameraAndMic}
-              onToggleMic={toggleMicMute}
+              speakerEnabled={speakerEnabled}
+              onToggleCamera={toggleCamera}
+              onToggleMic={toggleMic}
+              onToggleSpeaker={toggleSpeaker}
               onSwitchFacingMode={switchFacingMode}
               facingMode={facingMode}
               players={gameState.players}
@@ -826,39 +1030,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Column (1 col wide): Video Controls & Game Logs */}
+              {/* Right Column (1 col wide): Game Logs & Info */}
               <div className="space-y-4">
-                {/* Video / Camera Toggle */}
-                <div className="glass-panel rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Video className="w-4 h-4 text-[#c5a059]" />
-                      <h3 className="font-serif text-sm font-bold text-[#e0e0e0]">
-                        Video & Audio
-                      </h3>
-                    </div>
-                  </div>
-
-                  <button
-                    id="camera-toggle-btn"
-                    onClick={toggleCameraAndMic}
-                    className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border cursor-pointer ${
-                      isCameraActive
-                        ? 'bg-red-500/20 text-red-300 border-red-500/40 hover:bg-red-500/30'
-                        : 'glass text-[#c5a059] border-[#c5a05944] hover:bg-[#c5a05915]'
-                    }`}
-                  >
-                    {isCameraActive ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4 text-[#c5a059]" />}
-                    <span>{isCameraActive ? 'Kamera deaktivieren' : 'Kamera / Mikrofon einschalten'}</span>
-                  </button>
-
-                  <div className="text-[10px] text-zinc-500 leading-relaxed">
-                    Peer-to-peer WebRTC Direktverbindung mit Rauschunterdrückung.
-                  </div>
-                </div>
-
                 {/* Live Game Log */}
-                <div className="glass-panel rounded-2xl p-4 flex flex-col h-80">
+                <div className="glass-panel rounded-2xl p-4 flex flex-col h-96">
                   <div className="flex items-center gap-2 pb-2 mb-2 border-b border-white/5">
                     <Scroll className="w-4 h-4 text-[#c5a059]" />
                     <h3 className="font-serif text-sm font-bold text-[#e0e0e0]">
@@ -880,7 +1055,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer info in Sophisticated Dark style */}
+      {/* Footer */}
       <footer className="h-12 px-4 sm:px-8 flex items-center justify-between border-t border-white/5 text-[10px] uppercase tracking-[0.25em] opacity-40 max-w-6xl mx-auto w-full">
         <span>Maskerade • Sophisticated Dark</span>
         <span>Peer Audio/Video Synchronisiert</span>
@@ -889,6 +1064,12 @@ export default function App() {
       {/* ========================================================================= */}
       {/* MODALS */}
       {/* ========================================================================= */}
+
+      {/* Card Reveal Announcement Modal (Broadcasting revealed/lost cards to all players) */}
+      <CardRevealModal
+        revealEvent={revealedCardEvent}
+        onClose={() => setRevealedCardEvent(null)}
+      />
 
       {/* Lose Influence Modal */}
       {loseCardModalList && (
