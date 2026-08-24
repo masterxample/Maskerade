@@ -49,7 +49,6 @@ export const AudioController: React.FC<AudioControllerProps> = ({
   const [testTonePlaying, setTestTonePlaying] = useState<boolean>(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const peerAudioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
 
   // Detect mobile device reliably (Smartphone / Tablet vs. PC Desktop)
   useEffect(() => {
@@ -82,111 +81,49 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     return audioContextRef.current;
   }, []);
 
-  // Unlock Audio
+  // Unlock Audio globally for all elements and AudioContext
   const unlockAudio = useCallback(async () => {
     const ctx = getAudioContext();
     if (ctx && ctx.state === 'suspended') {
       await ctx.resume().catch(() => {});
     }
 
-    // Apply speaker state to all audio elements
-    (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
+    // Attempt to play all HTML5 audio elements on page
+    const audioElements = document.querySelectorAll('audio');
+    audioElements.forEach(el => {
       try {
-        audioEl.muted = !speakerEnabled;
-        audioEl.volume = speakerEnabled ? 1 : 0;
-        if (speakerEnabled) {
-          audioEl.play().catch(() => {});
+        el.muted = !speakerEnabled;
+        if (speakerEnabled && el.srcObject) {
+          el.play().catch(() => {});
         }
       } catch (e) {
-        // silent ignore
+        // ignore
       }
     });
 
     setIsAudioUnlocked(true);
   }, [getAudioContext, speakerEnabled]);
 
-  // Unlock audio on initial user touch or click
+  // Unlock audio on initial user touch or click anywhere
   useEffect(() => {
     const handleInteraction = () => {
       unlockAudio();
     };
 
     window.addEventListener('touchstart', handleInteraction, { once: true, passive: true });
+    window.addEventListener('touchend', handleInteraction, { once: true, passive: true });
     window.addEventListener('click', handleInteraction, { once: true });
+    window.addEventListener('pointerdown', handleInteraction, { once: true });
 
     return () => {
       window.removeEventListener('touchstart', handleInteraction);
+      window.removeEventListener('touchend', handleInteraction);
       window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('pointerdown', handleInteraction);
     };
   }, [unlockAudio]);
 
-  // Sync peer audio tracks into dedicated audio elements
-  useEffect(() => {
-    const activePeerIds = Object.keys(remoteStreams);
-
-    activePeerIds.forEach(peerId => {
-      const stream = remoteStreams[peerId];
-      if (!stream) return;
-
-      const hasAudio = stream.getAudioTracks().some(t => t.readyState === 'live');
-      if (!hasAudio) return;
-
-      let audioEl = peerAudioElementsRef.current[peerId];
-      if (!audioEl) {
-        audioEl = document.createElement('audio');
-        audioEl.id = `peer-audio-${peerId}`;
-        audioEl.autoplay = true;
-        audioEl.setAttribute('playsinline', 'true');
-        audioEl.setAttribute('webkit-playsinline', 'true');
-        document.body.appendChild(audioEl);
-        peerAudioElementsRef.current[peerId] = audioEl;
-      }
-
-      if (audioEl.srcObject !== stream) {
-        audioEl.srcObject = stream;
-      }
-
-      audioEl.muted = !speakerEnabled;
-      audioEl.volume = speakerEnabled ? 1 : 0;
-
-      if (speakerEnabled) {
-        audioEl.play().catch(() => {
-          setIsAudioUnlocked(false);
-        });
-      }
-    });
-
-    // Cleanup disconnected peers
-    Object.keys(peerAudioElementsRef.current).forEach(peerId => {
-      if (!remoteStreams[peerId]) {
-        const el = peerAudioElementsRef.current[peerId];
-        if (el) {
-          el.srcObject = null;
-          el.remove();
-        }
-        delete peerAudioElementsRef.current[peerId];
-      }
-    });
-  }, [remoteStreams, speakerEnabled]);
-
-  // Direct, safe speaker toggling on all active audio elements without blocking
-  useEffect(() => {
-    (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
-      try {
-        audioEl.muted = !speakerEnabled;
-        audioEl.volume = speakerEnabled ? 1 : 0;
-        if (speakerEnabled) {
-          audioEl.play().catch(() => {});
-        } else {
-          audioEl.pause();
-        }
-      } catch (e) {
-        // safety catch
-      }
-    });
-  }, [speakerEnabled]);
-
-  // Play test sound
+  // Play test sound for speaker confirmation
   const playSoundTest = () => {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -195,46 +132,70 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     setTestTonePlaying(true);
     const now = ctx.currentTime;
 
+    // Harmonic fanfare: C5, E5, G5, C6
     [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, now + i * 0.08);
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + i * 0.09);
 
-      gain.gain.setValueAtTime(0, now + i * 0.08);
-      gain.gain.linearRampToValueAtTime(0.18, now + i * 0.08 + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.6);
+      gain.gain.setValueAtTime(0, now + i * 0.09);
+      gain.gain.linearRampToValueAtTime(0.25, now + i * 0.09 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.55);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start(now + i * 0.08);
-      osc.stop(now + i * 0.08 + 0.65);
+      osc.start(now + i * 0.09);
+      osc.stop(now + i * 0.09 + 0.6);
     });
 
-    setTimeout(() => setTestTonePlaying(false), 900);
+    setTimeout(() => setTestTonePlaying(false), 950);
   };
 
   const remoteCount = Object.keys(remoteStreams).length;
 
   return (
     <div className="glass rounded-2xl p-3 sm:p-3.5 space-y-2.5 border border-[#c5a05933] shadow-lg">
-      {/* Mobile Audio Unlock Banner (Smartphone only) */}
+      {/* Dedicated JSX Audio Elements for all active remote peer streams */}
+      <div className="hidden" aria-hidden="true">
+        {Object.entries(remoteStreams).map(([peerId, stream]) => (
+          <audio
+            key={peerId}
+            id={`remote-audio-${peerId}`}
+            autoPlay
+            playsInline
+            ref={el => {
+              if (el) {
+                if (el.srcObject !== stream) {
+                  el.srcObject = stream;
+                }
+                el.muted = !speakerEnabled;
+                if (speakerEnabled) {
+                  el.play().catch(() => {});
+                }
+              }
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Mobile Audio Unlock Banner (Smartphone only if not yet interacted) */}
       {isMobile && !isAudioUnlocked && (
-        <div className="w-full bg-[#c5a05915] border border-[#c5a05966] rounded-xl p-3 flex items-center justify-between gap-2 text-xs text-[#c5a059]">
+        <div className="w-full bg-gradient-to-r from-[#c5a05925] to-[#c5a05910] border-2 border-[#c5a059] rounded-xl p-3 flex items-center justify-between gap-2 text-xs text-[#c5a059] shadow-[0_0_15px_rgba(197,160,89,0.25)]">
           <div className="flex items-center gap-2">
-            <Smartphone className="w-4 h-4 text-[#c5a059] flex-shrink-0 animate-pulse" />
-            <span>
-              <strong>Smartphone-Audio:</strong> Tippe hier, um Ton & Mikrofon freizugeben!
+            <Smartphone className="w-5 h-5 text-[#c5a059] flex-shrink-0 animate-pulse" />
+            <span className="leading-tight">
+              <strong className="text-white">Smartphone-Ton aktivieren:</strong> Tippe hier, um Audio & Lautsprecher freizuschalten.
             </span>
           </div>
           <button
             id="mobile-audio-unlock-btn"
             onClick={unlockAudio}
-            className="px-3.5 py-1.5 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-wider rounded-lg text-xs shadow-[0_0_10px_rgba(197,160,89,0.3)] active:scale-95 transition-all flex-shrink-0 cursor-pointer"
+            className="px-3.5 py-2 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-wider rounded-lg text-xs shadow-[0_0_12px_rgba(197,160,89,0.4)] active:scale-95 transition-all flex-shrink-0 cursor-pointer"
           >
-            Aktivieren
+            Ton an
           </button>
         </div>
       )}
@@ -258,7 +219,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             <span>{isCameraActive ? 'Kamera: AN' : 'Kamera: AUS'}</span>
           </button>
 
-          {/* Flip Camera Switch: ONLY on Mobile when camera is on (Hidden on Desktop/PC) */}
+          {/* Flip Camera Switch: ONLY on Mobile when camera is on */}
           {isMobile && isCameraActive && onSwitchFacingMode && (
             <button
               id="switch-camera-btn"
@@ -267,7 +228,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({
               title={`Kamera wechseln (aktuell: ${facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'})`}
             >
               <SwitchCamera className="w-4 h-4 text-[#c5a059]" />
-              <span>{facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'}</span>
+              <span>{facingMode === 'user' ? 'Front' : 'Rück'}</span>
             </button>
           )}
 
@@ -288,22 +249,20 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             <span>{isMicMuted ? 'Mikro: STUMM' : 'Mikro: AN'}</span>
           </button>
 
-          {/* Master Speaker Toggle: ONLY on Mobile (Hidden on Desktop/PC) */}
-          {isMobile && (
-            <button
-              id="master-speaker-toggle-btn"
-              onClick={onToggleSpeaker}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
-                speakerEnabled
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
-                  : 'bg-red-500/20 text-red-300 border-red-500/50 hover:bg-red-500/30'
-              }`}
-              title={speakerEnabled ? 'Handy-Lautsprecher stummschalten' : 'Handy-Lautsprecher einschalten'}
-            >
-              {speakerEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-              <span>{speakerEnabled ? 'Lautsprecher: AN' : 'Lautsprecher: AUS'}</span>
-            </button>
-          )}
+          {/* Universal Speaker Toggle (PC & Mobile) */}
+          <button
+            id="master-speaker-toggle-btn"
+            onClick={onToggleSpeaker}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
+              speakerEnabled
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                : 'bg-red-500/20 text-red-300 border-red-500/50 hover:bg-red-500/30'
+            }`}
+            title={speakerEnabled ? 'Lautsprecher stummschalten' : 'Lautsprecher einschalten'}
+          >
+            {speakerEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            <span>{speakerEnabled ? 'Lautsprecher: AN' : 'Lautsprecher: STUMM'}</span>
+          </button>
 
           {/* Sound Test Button (Desktop & Mobile) */}
           <button
@@ -311,10 +270,10 @@ export const AudioController: React.FC<AudioControllerProps> = ({
             onClick={playSoundTest}
             disabled={testTonePlaying}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-zinc-300 hover:text-white hover:bg-white/10 border border-white/10 text-xs font-semibold transition-all active:scale-95 cursor-pointer"
-            title="Prüft die Tonausgabe über die Lautsprecher"
+            title="Prüft die Tonausgabe über die Lautsprecher mit einem Testton"
           >
             <BellRing className={`w-3.5 h-3.5 ${testTonePlaying ? 'animate-bounce text-[#c5a059]' : 'text-[#c5a059]'}`} />
-            <span className="hidden sm:inline">{testTonePlaying ? 'Testet...' : 'Ton-Test'}</span>
+            <span>{testTonePlaying ? 'Testet...' : 'Ton-Test'}</span>
           </button>
         </div>
 

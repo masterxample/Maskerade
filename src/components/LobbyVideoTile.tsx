@@ -58,7 +58,7 @@ export const LobbyVideoTile: React.FC<LobbyVideoTileProps> = ({
             ref={videoRef}
             autoPlay
             playsInline
-            muted={isSelf}
+            muted={true}
             className="w-full h-full object-cover transform scale-100"
           />
         ) : (

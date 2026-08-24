@@ -178,44 +178,83 @@ export default function App() {
       }));
     });
 
-    // WebRTC signaling with candidate queueing
+    // WebRTC signaling with candidate queueing and polite peer collision resolution
     newSocket.on('webrtc-signal', async ({ from, data }: { from: string; data: any }) => {
-      let pc = peerConnectionsRef.current[from];
-      if (!pc) {
-        pc = createPeerConnection(from, false, newSocket);
-      }
+      try {
+        let pc = peerConnectionsRef.current[from];
+        if (!pc) {
+          pc = createPeerConnection(from, false, newSocket);
+        }
 
-      if (data.sdp) {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        if (data.sdp.type === 'offer') {
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          newSocket.emit('webrtc-signal', { to: from, data: { sdp: pc.localDescription } });
-        }
-        // Process any queued ICE candidates
-        if (pendingCandidatesRef.current[from]) {
-          for (const cand of pendingCandidatesRef.current[from]) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
-            } catch (e) {
-              console.error('Queued candidate error:', e);
+        if (data.sdp) {
+          const sdpDesc = new RTCSessionDescription(data.sdp);
+          const isOffer = sdpDesc.type === 'offer';
+          const isCollision = isOffer && (pc.signalingState !== 'stable');
+
+          if (isCollision) {
+            const isPolite = (newSocket.id || '') < from;
+            if (!isPolite) {
+              return; // Impolite peer ignores colliding offer
             }
+            await Promise.all([
+              pc.setLocalDescription({ type: 'rollback' } as any).catch(() => {}),
+              pc.setRemoteDescription(sdpDesc)
+            ]);
+          } else {
+            await pc.setRemoteDescription(sdpDesc);
           }
-          delete pendingCandidatesRef.current[from];
+
+          if (isOffer) {
+            // Bind current local tracks before answering
+            if (localStreamRef.current) {
+              const audioTrack = localStreamRef.current.getAudioTracks().find(t => t.readyState === 'live');
+              const videoTrack = localStreamRef.current.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
+              const senders = pc.getSenders();
+
+              if (audioTrack) {
+                const aSender = senders.find(s => s.track?.kind === 'audio');
+                if (aSender) aSender.replaceTrack(audioTrack).catch(() => {});
+                else pc.addTrack(audioTrack, localStreamRef.current);
+              }
+              if (videoTrack) {
+                const vSender = senders.find(s => s.track?.kind === 'video');
+                if (vSender) vSender.replaceTrack(videoTrack).catch(() => {});
+                else pc.addTrack(videoTrack, localStreamRef.current);
+              }
+            }
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            newSocket.emit('webrtc-signal', { to: from, data: { sdp: pc.localDescription } });
+          }
+
+          // Process queued ICE candidates
+          if (pendingCandidatesRef.current[from]) {
+            for (const cand of pendingCandidatesRef.current[from]) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (e) {
+                console.warn('Queued candidate error:', e);
+              }
+            }
+            delete pendingCandidatesRef.current[from];
+          }
+        } else if (data.candidate) {
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (e) {
+              console.warn('Error adding ICE candidate:', e);
+            }
+          } else {
+            if (!pendingCandidatesRef.current[from]) {
+              pendingCandidatesRef.current[from] = [];
+            }
+            pendingCandidatesRef.current[from].push(data.candidate);
+          }
         }
-      } else if (data.candidate) {
-        if (pc.remoteDescription && pc.remoteDescription.type) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) {
-            console.error('Error adding ICE candidate:', e);
-          }
-        } else {
-          if (!pendingCandidatesRef.current[from]) {
-            pendingCandidatesRef.current[from] = [];
-          }
-          pendingCandidatesRef.current[from].push(data.candidate);
-        }
+      } catch (err) {
+        console.warn('WebRTC signal handler error:', err);
       }
     });
 
@@ -230,51 +269,62 @@ export default function App() {
     };
   }, []);
 
-  // WebRTC Peer connection helper with explicit transceivers
+  // WebRTC Peer connection helper
   const createPeerConnection = useCallback((peerId: string, isInitiator: boolean, activeSocket: Socket) => {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.services.mozilla.com' }
       ]
     });
 
     peerConnectionsRef.current[peerId] = pc;
 
-    // Add audio and video transceivers immediately to prepare m-lines in SDP
-    const audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
-    const videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
-
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks().find(t => t.readyState === 'live');
-      if (audioTrack && audioTransceiver.sender) {
-        audioTransceiver.sender.replaceTrack(audioTrack).catch(() => {});
-      }
-      const videoTrack = localStreamRef.current.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
-      if (videoTrack && videoTransceiver.sender) {
-        videoTransceiver.sender.replaceTrack(videoTrack).catch(() => {});
-      }
+    // Attach local tracks or transceivers
+    if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
+      localStreamRef.current.getTracks().forEach(track => {
+        if (track.readyState === 'live') {
+          pc.addTrack(track, localStreamRef.current!);
+        }
+      });
+    } else {
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+      pc.addTransceiver('video', { direction: 'sendrecv' });
     }
 
     pc.ontrack = (event) => {
-      const [stream] = event.streams;
       const track = event.track;
+      const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([track]);
+
       setRemoteStreams(prev => {
-        let peerStream = prev[peerId];
-        if (!peerStream) {
-          peerStream = stream || new MediaStream([track]);
+        let currentStream = prev[peerId];
+        if (!currentStream) {
+          currentStream = remoteStream;
         } else {
-          if (!peerStream.getTracks().some(t => t.id === track.id)) {
-            peerStream.addTrack(track);
+          if (!currentStream.getTracks().some(t => t.id === track.id)) {
+            currentStream.addTrack(track);
           }
-          peerStream = new MediaStream(peerStream.getTracks());
+          currentStream = new MediaStream(currentStream.getTracks());
         }
         return {
           ...prev,
-          [peerId]: peerStream
+          [peerId]: currentStream
         };
       });
+
+      const handleTrackUpdate = () => {
+        setRemoteStreams(prev => {
+          const s = prev[peerId];
+          if (!s) return prev;
+          return { ...prev, [peerId]: new MediaStream(s.getTracks()) };
+        });
+      };
+
+      track.onmute = handleTrackUpdate;
+      track.onunmute = handleTrackUpdate;
+      track.onended = handleTrackUpdate;
     };
 
     pc.onicecandidate = (event) => {
@@ -314,7 +364,7 @@ export default function App() {
         } catch (e) {
           console.warn('Initial offer error:', e);
         }
-      }, 150);
+      }, 100);
     }
 
     return pc;
@@ -354,28 +404,112 @@ export default function App() {
     });
   }, [gameState, myId, socket, createPeerConnection]);
 
-  // Push local track updates to all active peers
+  // Voice Activity Detection (VAD) on local microphone to trigger speaking indicator
+  useEffect(() => {
+    if (!localStream || isMicMuted) {
+      if (socket) {
+        socket.emit('media-status', {
+          hasVideo: isCameraActive,
+          hasAudio: !isMicMuted && !!localStream?.getAudioTracks().find(t => t.readyState === 'live'),
+          isSpeaking: false
+        });
+      }
+      return;
+    }
+
+    const audioTrack = localStream.getAudioTracks().find(t => t.readyState === 'live' && t.enabled);
+    if (!audioTrack) return;
+
+    let isCancelled = false;
+    let audioCtx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let intervalId: any = null;
+    let lastSpeakingState = false;
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        audioCtx = new AudioCtx();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source = audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        intervalId = setInterval(() => {
+          if (isCancelled || !analyser) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          const isSpeakingNow = avg > 12; // threshold for voice presence
+
+          if (isSpeakingNow !== lastSpeakingState) {
+            lastSpeakingState = isSpeakingNow;
+            if (socket) {
+              socket.emit('media-status', {
+                hasVideo: isCameraActive,
+                hasAudio: !isMicMuted,
+                isSpeaking: isSpeakingNow
+              });
+            }
+          }
+        }, 150);
+      }
+    } catch (e) {
+      console.warn('VAD AudioContext init error:', e);
+    }
+
+    return () => {
+      isCancelled = true;
+      if (intervalId) clearInterval(intervalId);
+      if (source) source.disconnect();
+      if (audioCtx && audioCtx.state !== 'closed') {
+        audioCtx.close().catch(() => {});
+      }
+    };
+  }, [localStream, isMicMuted, isCameraActive, socket]);
+
+  // Push local track updates to all active peers & renegotiate
   const syncLocalTracksToPeers = useCallback((stream: MediaStream | null) => {
     const audioTrack = stream?.getAudioTracks().find(t => t.readyState === 'live') || null;
     const videoTrack = stream?.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) || null;
 
-    (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
+    (Object.entries(peerConnectionsRef.current) as [string, RTCPeerConnection][]).forEach(async ([peerId, pc]) => {
       try {
-        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
-        const audioTx = transceivers.find(t => t.receiver.track.kind === 'audio' || t.sender.track?.kind === 'audio');
-        const videoTx = transceivers.find(t => t.receiver.track.kind === 'video' || t.sender.track?.kind === 'video');
+        const senders = pc.getSenders();
+        const audioSender = senders.find(s => s.track?.kind === 'audio');
+        const videoSender = senders.find(s => s.track?.kind === 'video');
 
-        if (audioTx?.sender) {
-          audioTx.sender.replaceTrack(audioTrack).catch(() => {});
+        if (audioSender) {
+          await audioSender.replaceTrack(audioTrack);
+        } else if (audioTrack && stream) {
+          pc.addTrack(audioTrack, stream);
         }
-        if (videoTx?.sender) {
-          videoTx.sender.replaceTrack(videoTrack).catch(() => {});
+
+        if (videoSender) {
+          await videoSender.replaceTrack(videoTrack);
+        } else if (videoTrack && stream) {
+          pc.addTrack(videoTrack, stream);
+        }
+
+        if (pc.signalingState === 'stable' && socket) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('webrtc-signal', {
+            to: peerId,
+            data: { sdp: pc.localDescription }
+          });
         }
       } catch (err) {
-        console.warn('syncLocalTracksToPeers error:', err);
+        console.warn('syncLocalTracksToPeers error for peer', peerId, err);
       }
     });
-  }, []);
+  }, [socket]);
 
   // Independent Video / Camera Toggle
   const toggleCamera = async () => {

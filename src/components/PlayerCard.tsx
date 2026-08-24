@@ -138,7 +138,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
               ref={videoRef}
               autoPlay
               playsInline
-              muted={isSelf}
+              muted={true}
               className="w-full h-full object-cover"
             />
           ) : (
