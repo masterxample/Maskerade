@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #0d0d0d;
+    color: #e0e0e0;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+/* Sophisticated Dark Theme Custom Utilities */
+.font-serif {
+  font-family: 'Cinzel', serif;
+}
+
+.font-sans {
+  font-family: 'Inter', sans-serif;
+}
+
+.gold-accent {
+  color: #c5a059;
+}
+
+.gold-border {
+  border-color: #c5a059;
+}
+
+.gold-bg {
+  background-color: #c5a059;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(197, 160, 89, 0.2);
+  backdrop-filter: blur(8px);
+}
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(26, 26, 26, 0.7) 0%, rgba(13, 13, 13, 0.9) 100%);
+  border: 1px solid rgba(197, 160, 89, 0.25);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+.card-slot {
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.card-active {
+  border-color: #c5a059 !important;
+  box-shadow: 0 0 10px rgba(197, 160, 89, 0.35) !important;
+}
+
+.speaker-btn {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.speaker-btn:hover {
+  background: rgba(197, 160, 89, 0.15);
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d0d0d;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 3px;
+  border: 1px solid rgba(197, 160, 89, 0.2);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
