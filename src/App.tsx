@@ -66,6 +66,7 @@ export default function App() {
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [peerMediaStatus, setPeerMediaStatus] = useState<Record<string, { hasVideo: boolean; hasAudio: boolean; isSpeaking: boolean }>>({});
 
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -168,6 +169,14 @@ export default function App() {
       });
     });
 
+    // Peer media status sync
+    newSocket.on('peer-media-status', ({ from, status }: { from: string; status: { hasVideo: boolean; hasAudio: boolean; isSpeaking: boolean } }) => {
+      setPeerMediaStatus(prev => ({
+        ...prev,
+        [from]: status
+      }));
+    });
+
     // WebRTC signaling with candidate queueing
     newSocket.on('webrtc-signal', async ({ from, data }: { from: string; data: any }) => {
       let pc = peerConnectionsRef.current[from];
@@ -220,7 +229,7 @@ export default function App() {
     };
   }, []);
 
-  // WebRTC Peer connection helper
+  // WebRTC Peer connection helper with explicit transceivers
   const createPeerConnection = useCallback((peerId: string, isInitiator: boolean, activeSocket: Socket) => {
     const pc = new RTCPeerConnection({
       iceServers: [
@@ -232,20 +241,39 @@ export default function App() {
 
     peerConnectionsRef.current[peerId] = pc;
 
+    // Add audio and video transceivers immediately to prepare m-lines in SDP
+    const audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+    const videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
+
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
-        pc.addTrack(track, localStreamRef.current!);
-      });
+      const audioTrack = localStreamRef.current.getAudioTracks().find(t => t.readyState === 'live');
+      if (audioTrack && audioTransceiver.sender) {
+        audioTransceiver.sender.replaceTrack(audioTrack).catch(() => {});
+      }
+      const videoTrack = localStreamRef.current.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
+      if (videoTrack && videoTransceiver.sender) {
+        videoTransceiver.sender.replaceTrack(videoTrack).catch(() => {});
+      }
     }
 
     pc.ontrack = (event) => {
-      const [remoteStream] = event.streams;
-      if (remoteStream) {
-        setRemoteStreams(prev => ({
+      const [stream] = event.streams;
+      const track = event.track;
+      setRemoteStreams(prev => {
+        let peerStream = prev[peerId];
+        if (!peerStream) {
+          peerStream = stream || new MediaStream([track]);
+        } else {
+          if (!peerStream.getTracks().some(t => t.id === track.id)) {
+            peerStream.addTrack(track);
+          }
+          peerStream = new MediaStream(peerStream.getTracks());
+        }
+        return {
           ...prev,
-          [peerId]: remoteStream
-        }));
-      }
+          [peerId]: peerStream
+        };
+      });
     };
 
     pc.onicecandidate = (event) => {
@@ -259,15 +287,15 @@ export default function App() {
 
     pc.onnegotiationneeded = async () => {
       try {
-        const offer = await pc.createOffer();
         if (pc.signalingState !== 'stable') return;
+        const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         activeSocket.emit('webrtc-signal', {
           to: peerId,
           data: { sdp: pc.localDescription }
         });
       } catch (e) {
-        console.error('Offer creation error:', e);
+        console.warn('onnegotiationneeded error:', e);
       }
     };
 
@@ -283,9 +311,9 @@ export default function App() {
             });
           }
         } catch (e) {
-          console.error('Initial offer error:', e);
+          console.warn('Initial offer error:', e);
         }
-      }, 100);
+      }, 150);
     }
 
     return pc;
@@ -298,6 +326,11 @@ export default function App() {
       delete peerConnectionsRef.current[peerId];
     }
     setRemoteStreams(prev => {
+      const updated = { ...prev };
+      delete updated[peerId];
+      return updated;
+    });
+    setPeerMediaStatus(prev => {
       const updated = { ...prev };
       delete updated[peerId];
       return updated;
@@ -322,31 +355,23 @@ export default function App() {
 
   // Push local track updates to all active peers
   const syncLocalTracksToPeers = useCallback((stream: MediaStream | null) => {
+    const audioTrack = stream?.getAudioTracks().find(t => t.readyState === 'live') || null;
+    const videoTrack = stream?.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) || null;
+
     (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
-      const senders = pc.getSenders();
-      if (!stream) {
-        senders.forEach(sender => pc.removeTrack(sender));
-        return;
-      }
+      try {
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        const audioTx = transceivers.find(t => t.receiver.track.kind === 'audio' || t.sender.track?.kind === 'audio');
+        const videoTx = transceivers.find(t => t.receiver.track.kind === 'video' || t.sender.track?.kind === 'video');
 
-      // Sync Audio Tracks
-      const audioTrack = stream.getAudioTracks()[0] || null;
-      const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-      if (audioSender) {
-        if (audioTrack) audioSender.replaceTrack(audioTrack);
-        else pc.removeTrack(audioSender);
-      } else if (audioTrack) {
-        pc.addTrack(audioTrack, stream);
-      }
-
-      // Sync Video Tracks
-      const videoTrack = stream.getVideoTracks()[0] || null;
-      const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-      if (videoSender) {
-        if (videoTrack) videoSender.replaceTrack(videoTrack);
-        else pc.removeTrack(videoSender);
-      } else if (videoTrack) {
-        pc.addTrack(videoTrack, stream);
+        if (audioTx?.sender) {
+          audioTx.sender.replaceTrack(audioTrack).catch(() => {});
+        }
+        if (videoTx?.sender) {
+          videoTx.sender.replaceTrack(videoTrack).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('syncLocalTracksToPeers error:', err);
       }
     });
   }, []);
@@ -434,8 +459,10 @@ export default function App() {
   const toggleMic = async () => {
     if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsMicMuted(!audioTrack.enabled);
+      const newMutedState = !isMicMuted;
+      audioTrack.enabled = !newMutedState;
+      setIsMicMuted(newMutedState);
+      socket?.emit('media-status', { hasVideo: isCameraActive, hasAudio: !newMutedState, isSpeaking: false });
       return;
     }
 
@@ -463,6 +490,7 @@ export default function App() {
         setLocalStream(stream);
         setIsMicMuted(false);
         syncLocalTracksToPeers(stream);
+        socket?.emit('media-status', { hasVideo: isCameraActive, hasAudio: true, isSpeaking: false });
       }
     } catch (err) {
       console.error('Microphone permission error:', err);
@@ -603,17 +631,19 @@ export default function App() {
         <div className="absolute bottom-0 right-0 w-[450px] h-[300px] bg-[#4a3b1d0a] blur-[120px] rounded-full" />
       </div>
 
-      {/* Header Bar with New Golden Mask Emblem Logo (Point 6) */}
+      {/* Header Bar with New Golden Mask Emblem Logo (Requirement 6) */}
       <header className="relative z-10 h-16 border-b border-white/5 bg-[#0e0e11]/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between shadow-lg">
         <div className="flex items-center gap-3">
           {/* Circular Maskerade Emblem Logo */}
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-[#c5a059] shadow-[0_0_15px_rgba(197,160,89,0.4)] flex-shrink-0 bg-black">
-            <img
-              src={CARD_BACK_IMAGE}
-              alt="Maskerade Emblem"
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
+          <div className="relative w-11 h-11 rounded-full p-0.5 bg-gradient-to-tr from-[#8a6d3b] via-[#f5d77f] to-[#8a6d3b] shadow-[0_0_18px_rgba(197,160,89,0.5)] flex-shrink-0">
+            <div className="w-full h-full rounded-full overflow-hidden border-2 border-black bg-black">
+              <img
+                src={CARD_BACK_IMAGE}
+                alt="Maskerade Emblem"
+                className="w-full h-full object-cover transform scale-110"
+                referrerPolicy="no-referrer"
+              />
+            </div>
           </div>
           <div>
             <h1 className="font-serif text-lg sm:text-xl font-bold tracking-wider gold-accent flex items-center gap-1.5">
@@ -1102,7 +1132,9 @@ export default function App() {
                         isCurrentTurn={currentTurnPlayer?.id === p.id}
                         myHand={p.id === myId ? myHand : undefined}
                         stream={p.id === myId ? localStream : remoteStreams[p.id]}
+                        hasVideo={p.id === myId ? isCameraActive : (peerMediaStatus[p.id]?.hasVideo ?? (!!remoteStreams[p.id]?.getVideoTracks()?.find(t => t.readyState === 'live' && t.enabled)))}
                         isHost={p.id === gameState.hostId}
+                        isSpeaking={peerMediaStatus[p.id]?.isSpeaking}
                         onCardClick={(card) => setInspectCard(card as any)}
                       />
                     ))}

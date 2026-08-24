@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { PlayerState, PlayerCardState } from '../types';
 import { CardDisplay } from './CardDisplay';
-import { Coins, ShieldAlert, Crown, User, Volume2, VideoOff } from 'lucide-react';
+import { Coins, ShieldAlert, Crown, User, Volume2, VideoOff, Skull } from 'lucide-react';
 
 interface PlayerCardProps {
   player: PlayerState;
@@ -22,7 +22,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   isCurrentTurn,
   myHand = [],
   stream,
-  hasVideo = false,
+  hasVideo = true,
   isHost = false,
   isSpeaking = false,
   onCardClick,
@@ -31,19 +31,26 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const isEliminated = player.eliminated;
 
-  // Active video track check
+  // Active video track check:
+  // For self: check if stream exists and has an enabled, non-stopped video track
+  // For peer: check if stream exists, has video track, and peer has not disabled video
   const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
-  const isVideoAvailable = !!videoTrack && (isSelf ? true : hasVideo !== false);
+  const isVideoAvailable = !!videoTrack && (isSelf ? true : hasVideo);
 
   useEffect(() => {
-    if (videoRef.current) {
-      if (isVideoAvailable && stream) {
-        if (videoRef.current.srcObject !== stream) {
-          videoRef.current.srcObject = stream;
-        }
-        videoRef.current.play().catch(() => {});
-      } else {
-        videoRef.current.srcObject = null;
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    if (isVideoAvailable && stream) {
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
+      videoEl.play().catch(err => {
+        console.warn('Auto-play video playback handled:', err);
+      });
+    } else {
+      if (videoEl.srcObject) {
+        videoEl.srcObject = null;
       }
     }
   }, [stream, isVideoAvailable]);
@@ -124,20 +131,19 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
           </div>
         </div>
 
-        {/* Center: Webcam Window or Elegant Avatar Box */}
+        {/* Center: Webcam Window or Avatar Box */}
         <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/90 border border-[#c5a05933] shadow-inner mb-3 flex items-center justify-center group">
           {isVideoAvailable ? (
             <video
               ref={videoRef}
               autoPlay
               playsInline
-              webkit-playsinline="true"
               muted={isSelf}
               className="w-full h-full object-cover"
             />
           ) : (
-            <div className="flex flex-col items-center justify-center gap-1 text-zinc-500 select-none">
-              <div className="w-10 h-10 rounded-full bg-[#c5a05915] border border-[#c5a05933] flex items-center justify-center text-[#c5a059] font-serif font-bold text-base shadow">
+            <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-500 select-none py-4">
+              <div className="w-12 h-12 rounded-full bg-[#c5a05915] border border-[#c5a05944] flex items-center justify-center text-[#c5a059] font-serif font-bold text-lg shadow-[0_0_12px_rgba(197,160,89,0.2)]">
                 {player.name.slice(0, 1).toUpperCase()}
               </div>
               <span className="text-[10px] font-mono text-zinc-400">
@@ -155,13 +161,13 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
         </div>
       </div>
 
-      {/* Bottom Section: Spürbar vergrößerte Hofkarten direkt unter dem Webcam-Fenster */}
+      {/* Bottom Section: Hofkarten direkt unter dem Webcam-Fenster */}
       <div className="pt-1">
         <div className="text-[10px] uppercase font-mono tracking-wider gold-accent font-semibold mb-1.5 text-center flex items-center justify-center gap-1.5">
           <span>Hofkarten ({player.influence}/2)</span>
         </div>
 
-        <div className="flex items-center justify-center gap-2.5 sm:gap-3">
+        <div className="flex items-center justify-center gap-2.5 sm:gap-3 flex-wrap">
           {isSelf ? (
             <>
               {/* My Alive Cards */}
@@ -179,7 +185,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                   />
                 </div>
               ))}
-              {/* My Dead Revealed Cards */}
+              {/* My Dead Revealed Cards (Requirement 4: Clearly marked as Aufgedeckt / Zerrissen) */}
               {selfDeadCards.map((card, idx) => (
                 <div key={`dead-${card.cardId || idx}`} className="transform transition-transform">
                   <CardDisplay

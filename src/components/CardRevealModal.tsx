@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CardRevealEvent } from '../types';
 import { getCardDef, ROLES_META } from '../data/cards';
-import { X, Sparkles, AlertTriangle, ShieldCheck, Flame } from 'lucide-react';
+import { X, Sparkles, AlertTriangle, ShieldCheck, Flame, Skull } from 'lucide-react';
 
 interface CardRevealModalProps {
   revealEvent: CardRevealEvent | null;
@@ -19,19 +19,20 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
       setVisible(true);
       setIsTorn(false);
 
-      // If it's a card loss, trigger the dramatic tearing animation after 500ms
+      // Requirement 3: Show the card 100% complete and pristine for exactly 2.0 seconds (2000ms),
+      // then trigger the dramatic tearing animation.
       let tearTimer: NodeJS.Timeout | null = null;
       if (isLoss) {
         tearTimer = setTimeout(() => {
           setIsTorn(true);
-        }, 550);
+        }, 2000);
       }
 
-      // Auto-dismiss after 6.5s
+      // Auto-dismiss after 7.5s so players have time to see the whole sequence
       const closeTimer = setTimeout(() => {
         setVisible(false);
         onClose();
-      }, 6500);
+      }, 7500);
 
       return () => {
         if (tearTimer) clearTimeout(tearTimer);
@@ -80,7 +81,7 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
               isLoss ? 'text-red-400' : 'text-emerald-400'
             }`}
           >
-            {isLoss ? 'Hofkarten-Verlust (Zerrissen)' : 'Echter Rollenbeweis (Wahrheit)'}
+            {isLoss ? (isTorn ? 'Hofkarte Zerrissen' : 'Hofkarten-Verlust') : 'Echter Rollenbeweis (Wahrheit)'}
           </span>
 
           <h3 className="font-serif text-xl sm:text-2xl font-bold text-[#e0e0e0] leading-tight">
@@ -88,22 +89,22 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
           </h3>
         </div>
 
-        {/* Big Card Display with Tearing Effect (Zerreiß-Effekt) */}
-        <div className="flex justify-center py-2 relative min-h-[220px] sm:min-h-[240px] items-center">
+        {/* Big Card Display with 2-second pristine reveal followed by dramatic tearing effect */}
+        <div className="flex justify-center py-2 relative min-h-[240px] sm:min-h-[260px] items-center">
           {/* Card Presentation Container */}
-          <div className="relative w-[150px] h-[225px] sm:w-[170px] sm:h-[255px]">
+          <div className="relative w-[160px] h-[240px] sm:w-[180px] sm:h-[270px]">
             {isLoss ? (
-              // Two halves tearing apart in full vibrant color
+              // Two halves tearing apart in full vibrant color after 2 seconds
               <div className="relative w-full h-full">
                 {/* Left Half */}
                 <div
-                  className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out"
+                  className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out border border-[#c5a059]"
                   style={{
-                    clipPath: 'polygon(0% 0%, 58% 0%, 46% 38%, 56% 68%, 42% 100%, 0% 100%)',
+                    clipPath: isTorn ? 'polygon(0% 0%, 58% 0%, 46% 38%, 56% 68%, 42% 100%, 0% 100%)' : 'none',
                     transform: isTorn
-                      ? 'translate(-22px, 14px) rotate(-9deg) scale(0.96)'
+                      ? 'translate(-24px, 14px) rotate(-10deg) scale(0.95)'
                       : 'translate(0px, 0px) rotate(0deg) scale(1)',
-                    filter: isTorn ? 'drop-shadow(-4px 8px 12px rgba(0,0,0,0.8))' : 'none'
+                    filter: isTorn ? 'drop-shadow(-6px 10px 14px rgba(0,0,0,0.85))' : 'drop-shadow(0 0 20px rgba(197,160,89,0.4))'
                   }}
                 >
                   <img
@@ -112,39 +113,42 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
                 </div>
 
-                {/* Right Half */}
-                <div
-                  className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out"
-                  style={{
-                    clipPath: 'polygon(58% 0%, 100% 0%, 100% 100%, 42% 100%, 56% 68%, 46% 38%)',
-                    transform: isTorn
-                      ? 'translate(22px, 18px) rotate(9deg) scale(0.96)'
-                      : 'translate(0px, 0px) rotate(0deg) scale(1)',
-                    filter: isTorn ? 'drop-shadow(4px 8px 12px rgba(0,0,0,0.8))' : 'none'
-                  }}
-                >
-                  <img
-                    src={cardDef.image}
-                    alt={cardDef.displayName}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40" />
-                </div>
-
-                {/* Tear energy streak line */}
+                {/* Right Half (only split when isTorn is true) */}
                 {isTorn && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 animate-ping">
-                    <span className="text-red-500 font-extrabold text-2xl font-serif">⚡</span>
+                  <div
+                    className="absolute inset-0 rounded-2xl overflow-hidden shadow-2xl transition-all duration-700 ease-out border border-[#c5a059]"
+                    style={{
+                      clipPath: 'polygon(58% 0%, 100% 0%, 100% 100%, 42% 100%, 56% 68%, 46% 38%)',
+                      transform: 'translate(24px, 18px) rotate(10deg) scale(0.95)',
+                      filter: 'drop-shadow(6px 10px 14px rgba(0,0,0,0.85))'
+                    }}
+                  >
+                    <img
+                      src={cardDef.image}
+                      alt={cardDef.displayName}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
+                  </div>
+                )}
+
+                {/* Tear energy flash & skull when torn */}
+                {isTorn && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 animate-fade-in">
+                    <div className="px-3 py-1 bg-red-950/90 border-2 border-red-500 rounded-xl text-red-300 font-serif font-extrabold text-xs uppercase tracking-widest shadow-[0_0_20px_rgba(239,68,68,0.8)] flex items-center gap-1.5 backdrop-blur-md">
+                      <Skull className="w-4 h-4 text-red-400" />
+                      <span>Zerrissen</span>
+                    </div>
                   </div>
                 )}
               </div>
             ) : (
-              // Intact card with radiant aura for role proof
-              <div className="relative w-full h-full rounded-2xl overflow-hidden border-2 border-[#c5a059] shadow-[0_0_30px_rgba(197,160,89,0.6)] animate-pulse">
+              // Unbroken Proof Card with Gold Aura
+              <div className="relative w-full h-full rounded-2xl overflow-hidden shadow-[0_0_35px_rgba(16,185,129,0.4)] border-2 border-emerald-500/80 animate-scale-up">
                 <img
                   src={cardDef.image}
                   alt={cardDef.displayName}
@@ -152,50 +156,44 @@ export const CardRevealModal: React.FC<CardRevealModalProps> = ({ revealEvent, o
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-                <div className="absolute top-2 left-2 right-2 flex items-center justify-between text-xs gold-accent font-bold">
-                  <span>{roleMeta?.emblem}</span>
-                  <span className="bg-black/70 px-2 py-0.5 rounded text-[10px] uppercase font-mono tracking-wider">
-                    {cardDef.roleName}
-                  </span>
-                </div>
-                <div className="absolute bottom-2 inset-x-2 text-center">
-                  <div className="font-serif font-bold text-white text-sm">{cardDef.displayName}</div>
+                <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500/30 border border-emerald-400/60 text-emerald-300 font-mono text-[9px] font-bold">
+                  Beweis erbracht
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Card Name & Role Info */}
-        <div className="space-y-1">
-          <div className="font-serif text-lg font-bold text-[#e0e0e0] flex items-center justify-center gap-2">
-            <span>{roleMeta?.emblem}</span>
-            <span>{cardDef.displayName}</span>
-            <span className="text-xs font-mono font-normal text-zinc-400">({cardDef.roleName})</span>
+        {/* Card Name and Role Description */}
+        <div className="space-y-1 bg-black/40 p-3.5 rounded-2xl border border-white/5">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-base">{roleMeta?.emblem || '🎭'}</span>
+            <span className="font-serif font-bold text-lg text-[#e0e0e0]">
+              {cardDef.displayName}
+            </span>
+            <span className="text-xs font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-[#c5a05922] text-[#c5a059] border border-[#c5a05944]">
+              {cardDef.roleName}
+            </span>
           </div>
-          <p className="text-[11px] text-zinc-300 italic">{cardDef.actionText}</p>
+
+          <p className="text-xs text-zinc-300 leading-relaxed font-sans">
+            {revealEvent.reason}
+          </p>
         </div>
 
-        {/* Reason Banner */}
-        <div
-          className={`p-3 rounded-xl border text-xs font-medium leading-relaxed ${
-            isLoss
-              ? 'bg-red-950/40 border-red-500/40 text-red-200'
-              : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-          }`}
-        >
-          {revealEvent.reason}
-        </div>
-
-        {/* Dismiss Button */}
+        {/* Action Button */}
         <button
           onClick={() => {
             setVisible(false);
             onClose();
           }}
-          className="w-full py-2.5 bg-[#c5a059] hover:bg-[#d4b980] text-black font-bold uppercase tracking-wider text-xs rounded-xl shadow-[0_0_15px_rgba(197,160,89,0.3)] transition-all active:scale-95 cursor-pointer"
+          className={`w-full py-3 rounded-xl font-bold uppercase tracking-widest text-xs transition-all active:scale-95 cursor-pointer shadow-lg ${
+            isLoss
+              ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_20px_rgba(239,68,68,0.3)]'
+              : 'bg-[#c5a059] hover:bg-[#d4b980] text-black shadow-[0_0_20px_rgba(197,160,89,0.3)]'
+          }`}
         >
-          Fortfahren
+          Verstanden
         </button>
       </div>
     </div>

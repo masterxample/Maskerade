@@ -38,34 +38,35 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
   const cardName = displayName || cardDef.displayName;
   const roleMeta = role ? ROLES_META[role] : (cardDef.role ? ROLES_META[cardDef.role] : null);
 
-  // Standardized aspect ratio 2:3 with enhanced visibility & rich artwork presentation
+  // Aspect ratio 2:3 with enhanced size classes
   const sizeClasses = {
     xs: 'w-[52px] h-[78px] rounded-lg text-[10px]',
     sm: 'w-[76px] h-[114px] rounded-lg text-xs',
-    md: 'w-[104px] h-[156px] rounded-xl text-xs sm:text-sm',
-    lg: 'w-[140px] h-[210px] rounded-2xl text-sm sm:text-base',
-    xl: 'w-[190px] h-[285px] rounded-3xl text-base sm:text-lg'
+    md: 'w-[108px] h-[162px] rounded-xl text-xs sm:text-sm',
+    lg: 'w-[144px] h-[216px] rounded-2xl text-sm sm:text-base',
+    xl: 'w-[192px] h-[288px] rounded-3xl text-base sm:text-lg'
   }[size];
 
+  // Hidden Opponent Card (Using the classic deck back artwork)
   if (isHidden) {
     return (
       <div
         id={id}
         onClick={onClick}
-        className={`relative ${sizeClasses} flex-shrink-0 cursor-pointer overflow-hidden border border-[#c5a05944] bg-[#111111] shadow-md transition-all duration-200 select-none hover:scale-105 hover:border-[#c5a059] hover:shadow-[0_0_15px_rgba(197,160,89,0.2)] ${
-          selected ? 'ring-2 ring-[#c5a059] scale-105 shadow-[0_0_20px_rgba(197,160,89,0.4)]' : ''
+        className={`relative ${sizeClasses} flex-shrink-0 cursor-pointer overflow-hidden border-2 border-[#c5a05955] bg-[#0d0d10] shadow-lg transition-all duration-200 select-none hover:scale-105 hover:border-[#c5a059] hover:shadow-[0_0_18px_rgba(197,160,89,0.3)] ${
+          selected ? 'ring-2 ring-[#c5a059] scale-105 shadow-[0_0_20px_rgba(197,160,89,0.5)]' : ''
         } ${className}`}
-        title="Verdeckte Hofkarte"
+        title="Verdeckte Hofkarte des Gegners"
       >
         <img
           src={CARD_BACK_IMAGE}
-          alt="Maskerade Kartenrückseite"
+          alt="Maskerade Hofkarte"
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
           loading="lazy"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
-        <div className="absolute inset-x-0 bottom-1 text-center font-serif text-[9px] font-bold gold-accent tracking-widest">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/30 pointer-events-none" />
+        <div className="absolute inset-x-0 bottom-1 text-center font-serif text-[9px] sm:text-[10px] font-bold gold-accent tracking-widest drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
           MASKERADE
         </div>
       </div>
@@ -76,14 +77,14 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
     <div
       id={id}
       onClick={selectable || onClick ? onClick : undefined}
-      className={`group relative ${sizeClasses} flex-shrink-0 overflow-hidden border shadow-lg transition-all duration-200 select-none ${
+      className={`group relative ${sizeClasses} flex-shrink-0 overflow-hidden border-2 shadow-lg transition-all duration-200 select-none ${
         alive
-          ? 'border-[#c5a05955] hover:border-[#c5a059] hover:shadow-[0_0_15px_rgba(197,160,89,0.2)]'
-          : 'border-red-900/60 grayscale-[0.85] opacity-60'
+          ? 'border-[#c5a05966] hover:border-[#c5a059] hover:shadow-[0_0_18px_rgba(197,160,89,0.3)]'
+          : 'border-red-600/80 grayscale-[0.75] opacity-75 shadow-[0_0_15px_rgba(239,68,68,0.2)]'
       } ${selectable ? 'cursor-pointer hover:scale-105' : ''} ${
-        selected ? 'ring-2 ring-[#c5a059] scale-105 shadow-[0_0_20px_rgba(197,160,89,0.4)]' : ''
+        selected ? 'ring-2 ring-[#c5a059] scale-105 shadow-[0_0_20px_rgba(197,160,89,0.5)]' : ''
       } ${className}`}
-      title={`${cardName} (${cardDef.roleName})`}
+      title={`${cardName} (${cardDef.roleName})${!alive ? ' - AUFGEDECKT / VERLOREN' : ''}`}
     >
       {/* Background artwork */}
       <img
@@ -122,14 +123,17 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
         )}
       </div>
 
-      {/* Eliminated Overlay if dead */}
+      {/* Eliminated Overlay if dead (Requirement 4: Distinctly marked as Aufgedeckt / Zerrissen) */}
       {!alive && (
-        <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center p-1 backdrop-blur-[1px]">
-          <div className="w-6 h-6 rounded-full bg-red-950/90 border border-red-500/60 flex items-center justify-center text-red-400 shadow-md">
-            <Skull className="w-3.5 h-3.5" />
+        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-1.5 backdrop-blur-[1px] border-t-2 border-b-2 border-red-500/80">
+          <div className="w-7 h-7 rounded-full bg-red-950/90 border-2 border-red-500 flex items-center justify-center text-red-400 shadow-lg mb-1 animate-pulse">
+            <Skull className="w-4 h-4" />
           </div>
-          <span className="font-serif font-extrabold text-[9px] text-red-300 tracking-wider uppercase mt-1 drop-shadow">
+          <span className="font-serif font-black text-[10px] sm:text-xs text-red-300 tracking-wider uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,1)] text-center leading-tight">
             Aufgedeckt
+          </span>
+          <span className="text-[8px] font-mono text-red-400 tracking-widest uppercase">
+            Zerrissen
           </span>
         </div>
       )}

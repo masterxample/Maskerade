@@ -26,6 +26,7 @@ interface AudioControllerProps {
   facingMode?: 'user' | 'environment';
   players?: PlayerState[];
   myId?: string;
+  showLobbyVideoPreview?: boolean;
 }
 
 export const AudioController: React.FC<AudioControllerProps> = ({
@@ -40,7 +41,8 @@ export const AudioController: React.FC<AudioControllerProps> = ({
   onSwitchFacingMode,
   facingMode = 'user',
   players = [],
-  myId = ''
+  myId = '',
+  showLobbyVideoPreview = false
 }) => {
   const [isAudioUnlocked, setIsAudioUnlocked] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
@@ -49,15 +51,24 @@ export const AudioController: React.FC<AudioControllerProps> = ({
   const audioContextRef = useRef<AudioContext | null>(null);
   const peerAudioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
 
-  // Detect mobile device reliably
+  // Detect mobile device reliably (Smartphone / Tablet vs. PC Desktop)
   useEffect(() => {
-    const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
-    const mobileCheck = /android|ipad|iphone|ipod|windows phone/i.test(userAgent.toLowerCase()) || 
-      (typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 1024);
-    setIsMobile(mobileCheck);
+    const checkIsMobile = () => {
+      const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+      const mobileRegex = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i;
+      const isMobileUA = mobileRegex.test(ua.toLowerCase());
+      const hasTouch = 'ontouchstart' in window || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+      const isSmallScreen = typeof window !== 'undefined' && window.innerWidth < 768;
+      return isMobileUA || (hasTouch && isSmallScreen);
+    };
+
+    setIsMobile(checkIsMobile());
+    const handleResize = () => setIsMobile(checkIsMobile());
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize or resume AudioContext
+  // Initialize AudioContext
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -66,32 +77,35 @@ export const AudioController: React.FC<AudioControllerProps> = ({
       }
     }
     if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+      audioContextRef.current.resume().catch(() => {});
     }
     return audioContextRef.current;
   }, []);
 
-  // Global Audio Unlock handler on user interaction
+  // Unlock Audio
   const unlockAudio = useCallback(async () => {
     const ctx = getAudioContext();
     if (ctx && ctx.state === 'suspended') {
-      await ctx.resume();
+      await ctx.resume().catch(() => {});
     }
 
-    // Update all remote audio elements
+    // Apply speaker state to all audio elements
     (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
-      audioEl.muted = !speakerEnabled;
-      audioEl.volume = speakerEnabled ? 1 : 0;
-      const playPromise = audioEl.play();
-      if (playPromise && playPromise.catch) {
-        playPromise.catch(() => {});
+      try {
+        audioEl.muted = !speakerEnabled;
+        audioEl.volume = speakerEnabled ? 1 : 0;
+        if (speakerEnabled) {
+          audioEl.play().catch(() => {});
+        }
+      } catch (e) {
+        // silent ignore
       }
     });
 
     setIsAudioUnlocked(true);
   }, [getAudioContext, speakerEnabled]);
 
-  // Listen to any touch / click to automatically unlock audio on mobile
+  // Unlock audio on initial user touch or click
   useEffect(() => {
     const handleInteraction = () => {
       unlockAudio();
@@ -106,7 +120,7 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     };
   }, [unlockAudio]);
 
-  // Sync remote streams to dedicated <audio> elements for crystal-clear playback
+  // Sync peer audio tracks into dedicated audio elements
   useEffect(() => {
     const activePeerIds = Object.keys(remoteStreams);
 
@@ -114,8 +128,8 @@ export const AudioController: React.FC<AudioControllerProps> = ({
       const stream = remoteStreams[peerId];
       if (!stream) return;
 
-      // Only mount audio element if stream has audio tracks
-      if (stream.getAudioTracks().length === 0) return;
+      const hasAudio = stream.getAudioTracks().some(t => t.readyState === 'live');
+      if (!hasAudio) return;
 
       let audioEl = peerAudioElementsRef.current[peerId];
       if (!audioEl) {
@@ -128,13 +142,15 @@ export const AudioController: React.FC<AudioControllerProps> = ({
         peerAudioElementsRef.current[peerId] = audioEl;
       }
 
-      audioEl.srcObject = stream;
+      if (audioEl.srcObject !== stream) {
+        audioEl.srcObject = stream;
+      }
+
       audioEl.muted = !speakerEnabled;
       audioEl.volume = speakerEnabled ? 1 : 0;
 
-      const playPromise = audioEl.play();
-      if (playPromise && playPromise.catch) {
-        playPromise.catch(() => {
+      if (speakerEnabled) {
+        audioEl.play().catch(() => {
           setIsAudioUnlocked(false);
         });
       }
@@ -153,18 +169,24 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     });
   }, [remoteStreams, speakerEnabled]);
 
-  // Mute/unmute all peer audio elements whenever speakerEnabled changes
+  // Direct, safe speaker toggling on all active audio elements without blocking
   useEffect(() => {
     (Object.values(peerAudioElementsRef.current) as HTMLAudioElement[]).forEach(audioEl => {
-      audioEl.muted = !speakerEnabled;
-      audioEl.volume = speakerEnabled ? 1 : 0;
-      if (speakerEnabled) {
-        audioEl.play().catch(() => {});
+      try {
+        audioEl.muted = !speakerEnabled;
+        audioEl.volume = speakerEnabled ? 1 : 0;
+        if (speakerEnabled) {
+          audioEl.play().catch(() => {});
+        } else {
+          audioEl.pause();
+        }
+      } catch (e) {
+        // safety catch
       }
     });
   }, [speakerEnabled]);
 
-  // Play test chime to confirm sound output
+  // Play test sound
   const playSoundTest = () => {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -173,7 +195,6 @@ export const AudioController: React.FC<AudioControllerProps> = ({
     setTestTonePlaying(true);
     const now = ctx.currentTime;
 
-    // Harmonic chords
     [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -199,13 +220,13 @@ export const AudioController: React.FC<AudioControllerProps> = ({
 
   return (
     <div className="glass rounded-2xl p-3 sm:p-3.5 space-y-2.5 border border-[#c5a05933] shadow-lg">
-      {/* Mobile Audio / Video Unlock Banner (Only shown on Mobile if audio isn't unlocked yet) */}
+      {/* Mobile Audio Unlock Banner (Smartphone only) */}
       {isMobile && !isAudioUnlocked && (
         <div className="w-full bg-[#c5a05915] border border-[#c5a05966] rounded-xl p-3 flex items-center justify-between gap-2 text-xs text-[#c5a059]">
           <div className="flex items-center gap-2">
             <Smartphone className="w-4 h-4 text-[#c5a059] flex-shrink-0 animate-pulse" />
             <span>
-              <strong>Handy-Audio & Video:</strong> Tippe hier, um Ton & Mikrofon auf deinem Smartphone freizugeben!
+              <strong>Smartphone-Audio:</strong> Tippe hier, um Ton & Mikrofon freizugeben!
             </span>
           </div>
           <button
@@ -226,23 +247,23 @@ export const AudioController: React.FC<AudioControllerProps> = ({
           <button
             id="webcam-toggle-btn"
             onClick={onToggleCamera}
-            className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
               isCameraActive
-                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
                 : 'glass text-[#c5a059] border-[#c5a05944] hover:bg-[#c5a05915]'
             }`}
-            title={isCameraActive ? 'Kamera ist an' : 'Webcam aktivieren'}
+            title={isCameraActive ? 'Kamera ausschalten' : 'Kamera einschalten'}
           >
             {isCameraActive ? <Video className="w-4 h-4 text-emerald-400" /> : <VideoOff className="w-4 h-4 text-[#c5a059]" />}
             <span>{isCameraActive ? 'Kamera: AN' : 'Kamera: AUS'}</span>
           </button>
 
-          {/* Flip Camera Switch on Mobile ONLY (Hidden on Desktop/PC) */}
+          {/* Flip Camera Switch: ONLY on Mobile when camera is on (Hidden on Desktop/PC) */}
           {isMobile && isCameraActive && onSwitchFacingMode && (
             <button
               id="switch-camera-btn"
               onClick={onSwitchFacingMode}
-              className="speaker-btn flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-[#c5a059] border border-[#c5a05944] hover:bg-[#c5a05915] text-xs font-semibold transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-[#c5a059] border border-[#c5a05944] hover:bg-[#c5a05915] text-xs font-semibold transition-all active:scale-95 cursor-pointer"
               title={`Kamera wechseln (aktuell: ${facingMode === 'user' ? 'Frontkamera' : 'Rückkamera'})`}
             >
               <SwitchCamera className="w-4 h-4 text-[#c5a059]" />
@@ -254,42 +275,42 @@ export const AudioController: React.FC<AudioControllerProps> = ({
           <button
             id="mic-toggle-btn"
             onClick={onToggleMic}
-            className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
               localStream && !isMicMuted
-                ? 'bg-[#c5a05922] text-[#c5a059] border-[#c5a05966] hover:bg-[#c5a05933] shadow-[0_0_10px_rgba(197,160,89,0.2)]'
+                ? 'bg-[#c5a05925] text-[#c5a059] border-[#c5a059] hover:bg-[#c5a05935] shadow-[0_0_12px_rgba(197,160,89,0.3)]'
                 : isMicMuted
-                ? 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25'
+                ? 'bg-red-500/20 text-red-300 border-red-500/50 hover:bg-red-500/30'
                 : 'glass text-zinc-400 border-white/10 hover:text-white'
             }`}
-            title={isMicMuted ? 'Mikrofon ist stumm' : 'Mikrofon ist aktiv'}
+            title={isMicMuted ? 'Mikrofon einschalten' : 'Mikrofon stummschalten'}
           >
             {localStream && !isMicMuted ? <Mic className="w-4 h-4 text-[#c5a059]" /> : <MicOff className="w-4 h-4 text-red-400" />}
             <span>{isMicMuted ? 'Mikro: STUMM' : 'Mikro: AN'}</span>
           </button>
 
-          {/* Master Speaker Toggle (Lautsprecher an/aus - Nur auf Mobilgeräten/Smartphones sichtbar) */}
+          {/* Master Speaker Toggle: ONLY on Mobile (Hidden on Desktop/PC) */}
           {isMobile && (
             <button
               id="master-speaker-toggle-btn"
               onClick={onToggleSpeaker}
-              className={`speaker-btn flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all border cursor-pointer ${
                 speakerEnabled
-                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
-                  : 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                  : 'bg-red-500/20 text-red-300 border-red-500/50 hover:bg-red-500/30'
               }`}
-              title={speakerEnabled ? 'Handy-Lautsprecher ist aktiv' : 'Handy-Lautsprecher ist stummgeschaltet'}
+              title={speakerEnabled ? 'Handy-Lautsprecher stummschalten' : 'Handy-Lautsprecher einschalten'}
             >
               {speakerEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               <span>{speakerEnabled ? 'Lautsprecher: AN' : 'Lautsprecher: AUS'}</span>
             </button>
           )}
 
-          {/* Sound Test Button */}
+          {/* Sound Test Button (Desktop & Mobile) */}
           <button
             id="sound-test-btn"
             onClick={playSoundTest}
             disabled={testTonePlaying}
-            className="speaker-btn flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-zinc-300 hover:text-white hover:bg-white/10 border border-white/10 text-xs font-semibold transition-all active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl glass text-zinc-300 hover:text-white hover:bg-white/10 border border-white/10 text-xs font-semibold transition-all active:scale-95 cursor-pointer"
             title="Prüft die Tonausgabe über die Lautsprecher"
           >
             <BellRing className={`w-3.5 h-3.5 ${testTonePlaying ? 'animate-bounce text-[#c5a059]' : 'text-[#c5a059]'}`} />
