@@ -56,9 +56,11 @@ export default function App() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
+  const pendingCandidatesRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
 
   // Socket Connection setup
   useEffect(() => {
@@ -134,7 +136,7 @@ export default function App() {
       });
     });
 
-    // WebRTC signaling
+    // WebRTC signaling with candidate queueing
     newSocket.on('webrtc-signal', async ({ from, data }: { from: string; data: any }) => {
       let pc = peerConnectionsRef.current[from];
       if (!pc) {
@@ -148,11 +150,29 @@ export default function App() {
           await pc.setLocalDescription(answer);
           newSocket.emit('webrtc-signal', { to: from, data: { sdp: pc.localDescription } });
         }
+        // Process any queued ICE candidates
+        if (pendingCandidatesRef.current[from]) {
+          for (const cand of pendingCandidatesRef.current[from]) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.error('Queued candidate error:', e);
+            }
+          }
+          delete pendingCandidatesRef.current[from];
+        }
       } else if (data.candidate) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-          console.error('Error adding ICE candidate:', e);
+        if (pc.remoteDescription && pc.remoteDescription.type) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (e) {
+            console.error('Error adding ICE candidate:', e);
+          }
+        } else {
+          if (!pendingCandidatesRef.current[from]) {
+            pendingCandidatesRef.current[from] = [];
+          }
+          pendingCandidatesRef.current[from].push(data.candidate);
         }
       }
     });
@@ -173,7 +193,8 @@ export default function App() {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
       ]
     });
 
@@ -204,19 +225,35 @@ export default function App() {
       }
     };
 
+    pc.onnegotiationneeded = async () => {
+      try {
+        const offer = await pc.createOffer();
+        if (pc.signalingState !== 'stable') return;
+        await pc.setLocalDescription(offer);
+        activeSocket.emit('webrtc-signal', {
+          to: peerId,
+          data: { sdp: pc.localDescription }
+        });
+      } catch (e) {
+        console.error('Offer creation error:', e);
+      }
+    };
+
     if (isInitiator) {
-      pc.onnegotiationneeded = async () => {
+      setTimeout(async () => {
         try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          activeSocket.emit('webrtc-signal', {
-            to: peerId,
-            data: { sdp: pc.localDescription }
-          });
+          if (pc.signalingState === 'stable') {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            activeSocket.emit('webrtc-signal', {
+              to: peerId,
+              data: { sdp: pc.localDescription }
+            });
+          }
         } catch (e) {
-          console.error('Offer creation error:', e);
+          console.error('Initial offer error:', e);
         }
-      };
+      }, 100);
     }
 
     return pc;
@@ -251,6 +288,47 @@ export default function App() {
     });
   }, [gameState, isCameraActive, myId, socket, createPeerConnection]);
 
+  // Robust getUserMedia with multiple fallbacks for mobile browsers
+  const acquireMediaStream = async (facing: 'user' | 'environment') => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 24, max: 30 }
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+    } catch (err1) {
+      console.warn('Optimal stream constraints failed, attempting fallback 1:', err1);
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing },
+          audio: true
+        });
+      } catch (err2) {
+        console.warn('Fallback 1 failed, attempting fallback 2 (general video+audio):', err2);
+        try {
+          return await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+          });
+        } catch (err3) {
+          console.warn('Fallback 2 failed, attempting video-only:', err3);
+          return await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
+      }
+    }
+  };
+
   // Media Toggle (Camera & Mic)
   const toggleCameraAndMic = async () => {
     if (isCameraActive) {
@@ -266,15 +344,7 @@ export default function App() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-
+      const stream = await acquireMediaStream(facingMode);
       localStreamRef.current = stream;
       setLocalStream(stream);
       setIsCameraActive(true);
@@ -282,11 +352,53 @@ export default function App() {
 
       // Add tracks to existing peer connections
       (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        const senders = pc.getSenders();
+        stream.getTracks().forEach(track => {
+          const sender = senders.find(s => s.track && s.track.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, stream);
+          }
+        });
       });
     } catch (err: any) {
       console.error('Media stream error:', err);
-      alert('Kamera/Mikrofon konnte nicht aktiviert werden. Bitte Berechtigungen im Browser prüfen.');
+      alert('Kamera konnte nicht aktiviert werden. Bitte erlaube den Kamera-Zugriff in den Browser-Einstellungen deines Smartphones (Safari / Chrome).');
+    }
+  };
+
+  // Flip camera front/back on mobile
+  const switchFacingMode = async () => {
+    const nextFacing = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextFacing);
+
+    if (isCameraActive && localStreamRef.current) {
+      try {
+        localStreamRef.current.getVideoTracks().forEach(t => t.stop());
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: nextFacing }, width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        if (newVideoTrack) {
+          const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
+          if (oldVideoTrack) {
+            localStreamRef.current.removeTrack(oldVideoTrack);
+          }
+          localStreamRef.current.addTrack(newVideoTrack);
+          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+          (Object.values(peerConnectionsRef.current) as RTCPeerConnection[]).forEach(pc => {
+            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(newVideoTrack);
+            }
+          });
+        }
+      } catch (e) {
+        console.error('Failed to switch camera facing mode:', e);
+      }
     }
   };
 
@@ -565,12 +677,18 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Audio & Speaker helper in Lobby */}
+              {/* Audio & Video Controller in Lobby */}
               <AudioController
                 localStream={localStream}
                 remoteStreams={remoteStreams}
+                isCameraActive={isCameraActive}
                 isMicMuted={isMicMuted}
+                onToggleCamera={toggleCameraAndMic}
                 onToggleMic={toggleMicMute}
+                onSwitchFacingMode={switchFacingMode}
+                facingMode={facingMode}
+                players={gameState.players}
+                myId={myId}
               />
 
               {/* Host actions */}
@@ -625,12 +743,18 @@ export default function App() {
               </div>
             </div>
 
-            {/* Mobile Sound & Speaker Controller */}
+            {/* Mobile Sound & Video Controller */}
             <AudioController
               localStream={localStream}
               remoteStreams={remoteStreams}
+              isCameraActive={isCameraActive}
               isMicMuted={isMicMuted}
+              onToggleCamera={toggleCameraAndMic}
               onToggleMic={toggleMicMute}
+              onSwitchFacingMode={switchFacingMode}
+              facingMode={facingMode}
+              players={gameState.players}
+              myId={myId}
             />
 
             {/* Pending Phase (Claims, Challenges, Blocks) */}

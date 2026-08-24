@@ -38,13 +38,13 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
   const cardName = displayName || cardDef.displayName;
   const roleMeta = role ? ROLES_META[role] : (cardDef.role ? ROLES_META[cardDef.role] : null);
 
-  // Standardized aspect ratio 2:3 with consistent dimensions across the entire app
+  // Standardized aspect ratio 2:3 with enhanced visibility & rich artwork presentation
   const sizeClasses = {
-    xs: 'w-[40px] h-[60px] rounded-md text-[9px]',
-    sm: 'w-[56px] h-[84px] rounded-md text-[10px]',
-    md: 'w-[78px] h-[117px] rounded-lg text-xs',
-    lg: 'w-[110px] h-[165px] rounded-xl text-sm',
-    xl: 'w-[140px] h-[210px] rounded-2xl text-base'
+    xs: 'w-[52px] h-[78px] rounded-lg text-[10px]',
+    sm: 'w-[76px] h-[114px] rounded-lg text-xs',
+    md: 'w-[104px] h-[156px] rounded-xl text-xs sm:text-sm',
+    lg: 'w-[140px] h-[210px] rounded-2xl text-sm sm:text-base',
+    xl: 'w-[190px] h-[285px] rounded-3xl text-base sm:text-lg'
   }[size];
 
   if (isHidden) {
@@ -94,26 +94,30 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
         loading="lazy"
       />
 
-      {/* Top Banner with Emblem */}
-      <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/85 via-black/50 to-transparent p-1 flex items-center justify-between">
-        <span className="text-[11px] leading-none drop-shadow-md">
+      {/* Top Banner with Emblem & Role Tag */}
+      <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/60 to-transparent pt-1 px-1.5 pb-2 flex items-center justify-between pointer-events-none">
+        <span className="text-xs sm:text-sm leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] filter">
           {roleMeta?.emblem || '🎭'}
         </span>
-        {selected && (
+        {selected ? (
           <span className="w-4 h-4 rounded-full bg-[#c5a059] text-black flex items-center justify-center font-bold text-[10px] shadow">
             <Check className="w-3 h-3 stroke-[3]" />
+          </span>
+        ) : (
+          <span className="text-[9px] font-mono uppercase tracking-wider font-semibold text-[#c5a059] drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+            {cardDef.roleName}
           </span>
         )}
       </div>
 
       {/* Bottom Name Plate */}
-      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/80 to-transparent pt-3 pb-1 px-1 text-center">
-        <div className="font-serif font-bold gold-accent truncate leading-tight drop-shadow-md">
+      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/85 to-transparent pt-4 pb-1.5 px-1.5 text-center pointer-events-none">
+        <div className="font-serif font-bold text-[#e0e0e0] tracking-wide truncate leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
           {cardName}
         </div>
-        {size !== 'xs' && size !== 'sm' && (
-          <div className="text-[8px] text-zinc-400 font-mono tracking-wider uppercase truncate mt-0.5">
-            {cardDef.roleName}
+        {size !== 'xs' && (
+          <div className="text-[9px] text-[#c5a059] font-mono tracking-wider uppercase truncate mt-0.5 font-semibold drop-shadow">
+            {cardDef.title}
           </div>
         )}
       </div>

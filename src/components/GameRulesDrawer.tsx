@@ -93,7 +93,7 @@ export const GameRulesDrawer: React.FC<GameRulesDrawerProps> = ({ isOpen, onClos
                   </div>
 
                   {/* 3 Uniform Cards Display */}
-                  <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-2">
+                  <div className="flex items-center gap-3 overflow-x-auto pt-1 pb-2">
                     {roleCards.map(c => (
                       <div key={c.id} className="flex flex-col items-center">
                         <CardDisplay
@@ -101,9 +101,9 @@ export const GameRulesDrawer: React.FC<GameRulesDrawerProps> = ({ isOpen, onClos
                           role={c.role}
                           variantIndex={c.variantIndex}
                           displayName={c.displayName}
-                          size="xs"
+                          size="sm"
                         />
-                        <span className="text-[10px] text-zinc-400 mt-1 truncate max-w-[60px] font-mono">
+                        <span className="text-[10px] text-zinc-300 mt-1 truncate max-w-[80px] font-mono">
                           {c.displayName}
                         </span>
                       </div>

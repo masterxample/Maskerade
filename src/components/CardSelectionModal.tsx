@@ -206,7 +206,7 @@ export const CardSelectionModal: React.FC<CardSelectionModalProps> = ({
             Ausgewählt: {selectedExchangeCardIds.length} von {keepCount}
           </div>
 
-          <div className="flex flex-wrap justify-center gap-3 my-3 max-h-[50vh] overflow-y-auto p-1">
+          <div className="flex flex-wrap justify-center gap-3 my-3 max-h-[55vh] overflow-y-auto p-1">
             {cards.map(card => {
               const isSelected = selectedExchangeCardIds.includes(card.cardId);
               return (
@@ -217,7 +217,7 @@ export const CardSelectionModal: React.FC<CardSelectionModalProps> = ({
                     variantIndex={card.variantIndex}
                     displayName={card.displayName}
                     alive={true}
-                    size="md"
+                    size="lg"
                     selectable={true}
                     selected={isSelected}
                     onClick={() => handleToggleExchange(card.cardId)}

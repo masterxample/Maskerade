@@ -107,9 +107,9 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
             </div>
           </div>
 
-          {/* Optional Video Feed if active */}
-          {stream && (
-            <div className="mt-2.5 relative w-28 aspect-video rounded-lg overflow-hidden border border-[#c5a05944] bg-black">
+          {/* Optional Video Feed if active with video tracks */}
+          {stream && stream.getVideoTracks().length > 0 && stream.getVideoTracks().some(t => t.readyState === 'live') && (
+            <div className="mt-2.5 relative w-28 aspect-video rounded-lg overflow-hidden border border-[#c5a05944] bg-black shadow-inner">
               <video
                 ref={el => {
                   if (el && el.srcObject !== stream) {
@@ -118,10 +118,11 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                 }}
                 autoPlay
                 playsInline
+                webkit-playsinline="true"
                 muted={isSelf}
                 className="w-full h-full object-cover"
               />
-              <span className="absolute bottom-1 left-1 text-[9px] bg-black/80 px-1 py-0.2 rounded text-zinc-300 font-mono">
+              <span className="absolute bottom-1 left-1 text-[9px] bg-black/85 px-1.5 py-0.2 rounded text-zinc-300 font-mono border border-white/10">
                 {player.name}
               </span>
             </div>
@@ -129,7 +130,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
         </div>
 
         {/* Right: Embedded Cards cleanly displayed side-by-side next to name */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {isSelf ? (
             <>
               {/* My Alive Cards */}
@@ -141,7 +142,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                     variantIndex={card.variantIndex}
                     displayName={card.displayName}
                     alive={true}
-                    size="sm"
+                    size="md"
                     selectable={true}
                     onClick={() => onCardClick && onCardClick(card)}
                   />
@@ -156,7 +157,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                     variantIndex={card.variantIndex}
                     displayName={card.displayName}
                     alive={false}
-                    size="sm"
+                    size="md"
                     selectable={true}
                     onClick={() => onCardClick && onCardClick(card)}
                   />
@@ -170,7 +171,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                 <div key={`hidden-${idx}`} className="transform transition-transform hover:scale-105">
                   <CardDisplay
                     isHidden={true}
-                    size="sm"
+                    size="md"
                     onClick={() => onCardClick && onCardClick({ isHidden: true, index: idx })}
                   />
                 </div>
@@ -184,7 +185,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
                     variantIndex={card.variantIndex}
                     displayName={card.displayName}
                     alive={false}
-                    size="sm"
+                    size="md"
                     selectable={true}
                     onClick={() => onCardClick && onCardClick(card)}
                   />
