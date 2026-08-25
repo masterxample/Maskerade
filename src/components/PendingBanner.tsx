@@ -60,8 +60,8 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
                 <img
                   src={claimedCard.image}
                   alt={claimedCard.displayName}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover" referrerPolicy="no-referrer"
+                  
                 />
               </div>
             )}
@@ -162,8 +162,8 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
                 <img
                   src={blockCard.image}
                   alt={blockCard.displayName}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover" referrerPolicy="no-referrer"
+                  
                 />
               </div>
             )}

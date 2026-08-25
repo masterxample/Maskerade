@@ -29,7 +29,7 @@ export const LobbyVideoTile: React.FC<LobbyVideoTileProps> = ({
 
   // Check if live video track is available and enabled
   const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
-  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (!!videoTrack || hasVideo);
+  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (hasVideo && !!videoTrack);
 
   const handleVideoRef = (videoEl: HTMLVideoElement | null) => {
     videoRef.current = videoEl;

@@ -35,7 +35,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
   // For self: check if stream exists and has an enabled, non-stopped video track
   // For peer: check if stream exists, has video track, and peer has not disabled video
   const videoTrack = stream ? stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled) : null;
-  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (!!videoTrack || hasVideo);
+  const isVideoAvailable = isSelf ? (hasVideo || !!videoTrack) : (hasVideo && !!videoTrack);
 
   const handleVideoRef = (videoEl: HTMLVideoElement | null) => {
     videoRef.current = videoEl;

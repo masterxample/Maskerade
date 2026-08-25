@@ -61,8 +61,8 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
         <img
           src={CARD_BACK_IMAGE}
           alt="Maskerade Hofkarte"
-          className="w-full h-full object-cover"
-          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover" referrerPolicy="no-referrer"
+          
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/30 pointer-events-none" />
         <div className="absolute inset-x-0 bottom-1 text-center font-serif text-[9px] sm:text-[10px] font-bold gold-accent tracking-widest drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
@@ -90,7 +90,7 @@ export const CardDisplay: React.FC<CardDisplayProps> = ({
         src={cardDef.image}
         alt={cardName}
         className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-        referrerPolicy="no-referrer"
+        
       />
 
       {/* Top Banner with Emblem & Role Tag */}

@@ -1,26 +1,26 @@
 import { CardDef, RoleKey, ActionKey, ActionDefinition } from '../types';
 
-import kanzler1 from '../assets/images/kanzler_card_1787590668383.jpg';
-import kanzler2 from '../assets/images/kanzlerin_card_1787590845712.jpg';
-import kanzler3 from '../assets/images/kanzler_elder_card_1787590920279.jpg';
+import kanzler1 from '../assets/images/kanzler-card-1787590668383.jpg';
+import kanzler2 from '../assets/images/kanzlerin-card-1787590845712.jpg';
+import kanzler3 from '../assets/images/kanzler-elder-card-1787590920279.jpg';
 
-import strassenraeuber1 from '../assets/images/strassenraeuber_card_1787590685292.jpg';
-import strassenraeuber2 from '../assets/images/strassenraeuberin_card_1787590859654.jpg';
-import strassenraeuber3 from '../assets/images/strassenraeuber_mask_card_1787590935913.jpg';
+import strassenraeuber1 from '../assets/images/strassenraeuber-card-1787590685292.jpg';
+import strassenraeuber2 from '../assets/images/strassenraeuberin-card-1787590859654.jpg';
+import strassenraeuber3 from '../assets/images/strassenraeuber-mask-card-1787590935913.jpg';
 
-import spion1 from '../assets/images/spion_card_1787590697235.jpg';
-import spion2 from '../assets/images/spionin_card_1787590874034.jpg';
-import spion3 from '../assets/images/spion_analyst_card_1787590949296.jpg';
+import spion1 from '../assets/images/spion-card-1787590697235.jpg';
+import spion2 from '../assets/images/spionin-card-1787590874034.jpg';
+import spion3 from '../assets/images/spion-analyst-card-1787590949296.jpg';
 
-import bodyguard1 from '../assets/images/bodyguard_card_1787590727979.jpg';
-import bodyguard2 from '../assets/images/bodyguardin_card_1787590888013.jpg';
-import bodyguard3 from '../assets/images/bodyguard_bald_card_1787590962433.jpg';
+import bodyguard1 from '../assets/images/bodyguard-card-1787590727979.jpg';
+import bodyguard2 from '../assets/images/bodyguardin-card-1787590888013.jpg';
+import bodyguard3 from '../assets/images/bodyguard-bald-card-1787590962433.jpg';
 
-import bluthund1 from '../assets/images/bluthund_card_1787590748832.jpg';
-import bluthund2 from '../assets/images/bluthuendin_card_1787590901530.jpg';
-import bluthund3 from '../assets/images/bluthund_fedora_card_1787590977371.jpg';
+import bluthund1 from '../assets/images/bluthund-card-1787590748832.jpg';
+import bluthund2 from '../assets/images/bluthuendin-card-1787590901530.jpg';
+import bluthund3 from '../assets/images/bluthund-fedora-card-1787590977371.jpg';
 
-import cardBackImg from '../assets/images/card_back_1787590760719.jpg';
+import cardBackImg from '../assets/images/card-back-1787590760719.jpg';
 
 export const CARD_BACK_IMAGE = cardBackImg;
 

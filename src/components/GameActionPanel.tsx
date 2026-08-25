@@ -130,8 +130,8 @@ export const GameActionPanel: React.FC<GameActionPanelProps> = ({
                         <img
                           src={roleCard.image}
                           alt={roleCard.displayName}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover" referrerPolicy="no-referrer"
+                          
                         />
                         <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[7px] text-center font-mono text-[#c5a059] truncate px-0.5">
                           {roleCard.roleName}
