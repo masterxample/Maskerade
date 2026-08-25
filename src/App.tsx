@@ -11,7 +11,7 @@ import { CardRevealModal } from './components/CardRevealModal';
 import { TurnTimerBar } from './components/TurnTimerBar';
 import { GameRulesDrawer } from './components/GameRulesDrawer';
 import { LobbyVideoTile } from './components/LobbyVideoTile';
-import { ALL_CARD_DEFS, getCardDef, CARD_BACK_IMAGE } from './data/cards';
+import { ALL_CARD_DEFS, getCardDef, CARD_BACK_IMAGE, ROLES_META } from './data/cards';
 import {
   Crown,
   Users,
@@ -30,7 +30,9 @@ import {
   RotateCcw,
   ShieldAlert,
   Clock,
-  Sliders
+  Sliders,
+  Layers,
+  HelpCircle
 } from 'lucide-react';
 
 export default function App() {
@@ -799,7 +801,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Rules / Codex Button */}
           <button
             id="open-rules-btn"
@@ -1110,6 +1112,64 @@ export default function App() {
                       onKick={() => handleKickPlayer(p.id)}
                     />
                   ))}
+                </div>
+              </div>
+
+              {/* Hofkarten-Vorschau in der Lobby (15 einzigartige Charaktermodelle) */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-[#c5a059] font-semibold px-1">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#c5a059]" />
+                    <span>Hofkarten-Deck (15 einzigartige Charakter-Designs)</span>
+                  </div>
+                  <button
+                    onClick={() => setIsRulesOpen(true)}
+                    className="text-zinc-400 hover:text-white text-[10px] underline underline-offset-2 flex items-center gap-1 cursor-pointer"
+                  >
+                    <BookOpen className="w-3 h-3 text-[#c5a059]" />
+                    <span>Alle Details im Codex</span>
+                  </button>
+                </div>
+
+                <div className="p-3 sm:p-4 glass rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 snap-x">
+                    {ALL_CARD_DEFS.map(card => {
+                      const meta = ROLES_META[card.role];
+                      return (
+                        <div
+                          key={card.id}
+                          onClick={() => setInspectCard({
+                            cardId: card.id,
+                            role: card.role,
+                            variantIndex: card.variantIndex,
+                            displayName: card.displayName,
+                            alive: true
+                          })}
+                          className="flex flex-col items-center p-2 rounded-xl bg-black/40 hover:bg-[#c5a05915] border border-white/5 hover:border-[#c5a05966] transition-all cursor-pointer group text-center snap-center shrink-0 w-24 sm:w-28"
+                          title={`${card.displayName} (${meta.name}) - Klicke für Details`}
+                        >
+                          <div className="transform group-hover:scale-105 transition-transform mb-2">
+                            <CardDisplay
+                              cardId={card.id}
+                              role={card.role}
+                              variantIndex={card.variantIndex}
+                              displayName={card.displayName}
+                              size="sm"
+                            />
+                          </div>
+                          <span className="font-serif text-[11px] font-bold text-[#e0e0e0] group-hover:text-[#c5a059] truncate w-full">
+                            {card.displayName}
+                          </span>
+                          <span className="text-[9px] text-zinc-500 font-mono">
+                            {meta.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[10px] text-zinc-400 text-center font-sans">
+                    Jedes der 15 Porträts ist einzigartig. Klicke auf eine Karte, um ihre Fähigkeiten zu inspizieren.
+                  </div>
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActionKey, PlayerCardState, PlayerState } from '../types';
-import { GAME_ACTIONS, ROLES_META } from '../data/cards';
+import { GAME_ACTIONS, ROLES_META, getCardDef } from '../data/cards';
 import { Swords, Shield, Target, AlertTriangle, Coins, Sparkles, ArrowRight } from 'lucide-react';
 
 interface GameActionPanelProps {
@@ -111,6 +111,7 @@ export const GameActionPanel: React.FC<GameActionPanelProps> = ({
               }
             }
 
+            const roleCard = action.role ? getCardDef(undefined, action.role) : null;
             const isSelected = selectedTargetAction === action.key;
 
             return (
@@ -118,28 +119,49 @@ export const GameActionPanel: React.FC<GameActionPanelProps> = ({
                 <button
                   onClick={() => handleActionClick(action.key)}
                   disabled={disabled}
-                  className={`w-full text-left p-3 rounded-xl border transition-all duration-200 flex items-center justify-between gap-3 ${cardBorder} ${
+                  className={`w-full text-left p-2.5 sm:p-3 rounded-xl border transition-all duration-200 flex items-center justify-between gap-3 ${cardBorder} ${
                     isSelected ? 'ring-1 ring-[#c5a059] bg-[#c5a05915] border-[#c5a059]' : 'bg-[#141414]/70'
                   } ${disabled ? 'opacity-35 cursor-not-allowed' : 'hover:scale-[1.006] cursor-pointer'}`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-serif font-bold text-xs sm:text-sm text-[#e0e0e0]">
-                        {action.label}
-                      </span>
-                      {action.cost > 0 && (
-                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944] font-mono">
-                          {action.cost} Münzen
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {/* Role Card Thumbnail */}
+                    {roleCard ? (
+                      <div className="w-9 h-12 rounded-lg overflow-hidden border border-[#c5a05955] flex-shrink-0 shadow relative bg-black/60">
+                        <img
+                          src={roleCard.image}
+                          alt={roleCard.displayName}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[7px] text-center font-mono text-[#c5a059] truncate px-0.5">
+                          {roleCard.roleName}
                         </span>
-                      )}
-                      {action.coinsGain > 0 && (
-                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30 font-mono">
-                          +{action.coinsGain} {action.coinsGain === 1 ? 'Münze' : 'Münzen'}
+                      </div>
+                    ) : (
+                      <div className="w-9 h-12 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center flex-shrink-0 text-xs text-zinc-400">
+                        {action.key === 'staatsstreich' ? '👑' : '🪙'}
+                      </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-serif font-bold text-xs sm:text-sm text-[#e0e0e0]">
+                          {action.label}
                         </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-0.5 truncate font-sans">
-                      {action.desc}
+                        {action.cost > 0 && (
+                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#c5a05922] text-[#c5a059] font-bold border border-[#c5a05944] font-mono">
+                            {action.cost} Münzen
+                          </span>
+                        )}
+                        {action.coinsGain > 0 && (
+                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30 font-mono">
+                            +{action.coinsGain} {action.coinsGain === 1 ? 'Münze' : 'Münzen'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-zinc-400 mt-0.5 truncate font-sans">
+                        {action.desc}
+                      </div>
                     </div>
                   </div>
 

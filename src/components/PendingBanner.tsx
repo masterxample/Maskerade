@@ -1,6 +1,6 @@
 import React from 'react';
 import { PendingAction, PlayerCardState, PlayerState, RoleKey } from '../types';
-import { GAME_ACTIONS, ROLES_META } from '../data/cards';
+import { GAME_ACTIONS, ROLES_META, getCardDef } from '../data/cards';
 import { Shield, Swords, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
 interface PendingBannerProps {
@@ -44,6 +44,7 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
   if (pending.phase === 'response') {
     const hasResponded = pending.responded.includes(myId);
     const isEligibleToRespond = !isActor && !me.eliminated && !hasResponded;
+    const claimedCard = actionDef.role ? getCardDef(undefined, actionDef.role) : null;
 
     // Remaining players we are waiting on
     const waitingPlayers = players
@@ -52,24 +53,36 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
 
     return (
       <div id={id} className="glass-panel border-[#c5a05966] rounded-2xl p-4 sm:p-5 shadow-[0_0_24px_rgba(197,160,89,0.2)]">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] gold-accent font-bold uppercase tracking-[0.2em] mb-1">
-              <Swords className="w-3.5 h-3.5 text-[#c5a059]" />
-              <span>Aktions-Ansage im Hof</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {claimedCard && (
+              <div className="w-11 h-15 rounded-lg overflow-hidden border border-[#c5a05988] flex-shrink-0 shadow relative bg-black/60 hidden sm:block">
+                <img
+                  src={claimedCard.image}
+                  alt={claimedCard.displayName}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            )}
+            <div>
+              <div className="flex items-center gap-2 text-[10px] gold-accent font-bold uppercase tracking-[0.2em] mb-1">
+                <Swords className="w-3.5 h-3.5 text-[#c5a059]" />
+                <span>Aktions-Ansage im Hof</span>
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-[#e0e0e0] font-serif">
+                <strong className="gold-accent">{actor.name}</strong> beansprucht „<strong className="text-white">{actionDef.label}</strong>“
+                {target ? <span> gegen <strong className="text-zinc-200">{target.name}</strong></span> : ''}
+                {actionDef.role && (
+                  <span className="text-xs text-zinc-400 font-sans block mt-0.5">
+                    (Behauptet Hofrolle: <strong className="gold-accent">{ROLES_META[actionDef.role].name}</strong>)
+                  </span>
+                )}
+              </h3>
             </div>
-            <h3 className="text-sm sm:text-base font-bold text-[#e0e0e0] font-serif">
-              <strong className="gold-accent">{actor.name}</strong> beansprucht „<strong className="text-white">{actionDef.label}</strong>“
-              {target ? <span> gegen <strong className="text-zinc-200">{target.name}</strong></span> : ''}
-              {actionDef.role && (
-                <span className="text-xs text-zinc-400 font-sans block mt-1">
-                  (Behauptet Hofrolle: <strong className="gold-accent">{ROLES_META[actionDef.role].name}</strong>)
-                </span>
-              )}
-            </h3>
           </div>
 
-          <div className="flex items-center gap-1.5 text-[10px] font-mono gold-accent bg-black/60 px-3 py-1 rounded-full border border-[#c5a05944]">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono gold-accent bg-black/60 px-3 py-1 rounded-full border border-[#c5a05944] flex-shrink-0">
             <Clock className="w-3 h-3 animate-spin text-[#c5a059]" />
             <span>Reaktion</span>
           </div>
@@ -134,6 +147,7 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
     const isBlocker = myId === pending.block.playerId;
     const hasResponded = pending.blockResponded.includes(myId);
     const isEligibleToRespond = !isBlocker && !me.eliminated && !hasResponded;
+    const blockCard = getCardDef(undefined, pending.block.role);
 
     const waitingPlayers = players
       .filter(p => p.id !== pending.block!.playerId && !p.eliminated && !pending.blockResponded.includes(p.id))
@@ -141,19 +155,31 @@ export const PendingBanner: React.FC<PendingBannerProps> = ({
 
     return (
       <div id={id} className="glass-panel border-[#c5a05966] rounded-2xl p-4 sm:p-5 shadow-[0_0_24px_rgba(197,160,89,0.2)]">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] gold-accent font-bold uppercase tracking-[0.2em] mb-1">
-              <Shield className="w-3.5 h-3.5 text-[#c5a059]" />
-              <span>Verteidigungs-Block</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {blockCard && (
+              <div className="w-11 h-15 rounded-lg overflow-hidden border border-[#c5a05988] flex-shrink-0 shadow relative bg-black/60 hidden sm:block">
+                <img
+                  src={blockCard.image}
+                  alt={blockCard.displayName}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            )}
+            <div>
+              <div className="flex items-center gap-2 text-[10px] gold-accent font-bold uppercase tracking-[0.2em] mb-1">
+                <Shield className="w-3.5 h-3.5 text-[#c5a059]" />
+                <span>Verteidigungs-Block</span>
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-[#e0e0e0] font-serif">
+                <strong className="text-white">{blocker ? blocker.name : 'Ein Spieler'}</strong> blockt die Aktion mit{' '}
+                <strong className="gold-accent">{ROLES_META[pending.block.role].name}</strong>!
+              </h3>
             </div>
-            <h3 className="text-sm sm:text-base font-bold text-[#e0e0e0] font-serif">
-              <strong className="text-white">{blocker ? blocker.name : 'Ein Spieler'}</strong> blockt die Aktion mit{' '}
-              <strong className="gold-accent">{ROLES_META[pending.block.role].name}</strong>!
-            </h3>
           </div>
 
-          <div className="flex items-center gap-1.5 text-[10px] font-mono gold-accent bg-black/60 px-3 py-1 rounded-full border border-[#c5a05944]">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono gold-accent bg-black/60 px-3 py-1 rounded-full border border-[#c5a05944] flex-shrink-0">
             <Clock className="w-3 h-3 animate-spin text-[#c5a059]" />
             <span>Blockprüfung</span>
           </div>

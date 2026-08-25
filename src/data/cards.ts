@@ -20,7 +20,7 @@ import bluthund1 from '../assets/images/bluthund_card_1787590748832.jpg';
 import bluthund2 from '../assets/images/bluthuendin_card_1787590901530.jpg';
 import bluthund3 from '../assets/images/bluthund_fedora_card_1787590977371.jpg';
 
-import cardBackImg from '../assets/images/grafik_deck_1787590648412.jpg';
+import cardBackImg from '../assets/images/card_back_1787590760719.jpg';
 
 export const CARD_BACK_IMAGE = cardBackImg;
 
